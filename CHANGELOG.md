@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1 — 2026-09-23
+
+- The confirmation the guard asks for is now a typed `/model <resolved model id>`. Verified in the Claude desktop
+  app: its model picker and a typed `/model` both reach Claude Code as an app request (`source: sdk`), an `ask`
+  shows no dialog there and blocks the switch with the message, and a typed repeat confirms it; picking the
+  same model again in the picker sends nothing, and after a blocked switch the picker can keep showing the new
+  model while the session stays on the old one. The resolved id avoids an alias resolving to another version.
+
 ## 0.1.0 — 2026-09-23
 
 - Model-switch guard: a `PreModelSwitch` hook that answers `ask` when the current model's cache is warm and

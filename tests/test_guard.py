@@ -29,6 +29,9 @@ class DecideTests(unittest.TestCase):
         self.assertIn("450k tokens", specific["permissionDecisionReason"])
         self.assertIn("$9.00", specific["permissionDecisionReason"])
         self.assertIn("fable subagent", specific["permissionDecisionReason"])
+        # The confirmation is a typed command with the resolved id: re-picking in the desktop
+        # app's picker sends nothing, and an alias can resolve to another version.
+        self.assertIn("`/model claude-fable-5-1` within 120s", specific["permissionDecisionReason"])
         self.assertEqual(pending, {"s1": {"to_model": "claude-fable-5-1", "at": 1000.0}})
 
     def test_the_same_switch_again_inside_the_window_is_the_confirmation(self):
@@ -78,7 +81,7 @@ class DecideTests(unittest.TestCase):
         output, _ = decide(EVENT, {}, 0.0, Config(lang="ko"))
         reason = output["hookSpecificOutput"]["permissionDecisionReason"]
         self.assertIn("서브에이전트", reason)
-        self.assertIn("120초 안에", reason)
+        self.assertIn("120초 안에 `/model claude-fable-5-1`를 입력하세요", reason)
 
     def test_config_from_env(self):
         config = Config.from_env({"CACHEKEEPER_MODE": "WARN", "CACHEKEEPER_MIN_USD": "2.5", "LANG": "ko_KR.UTF-8"})

@@ -127,6 +127,10 @@ def message(event: dict, tokens: int, usd: float | None, config: Config) -> str:
     ttl = event.get("cache_ttl") or "?"
     size = f"{tokens / 1000:,.0f}k"
     pricing = event.get("pricing")
+    # The confirmation names the resolved id: an alias such as `opus` can resolve to another
+    # version than the one asked about, and picking the same model again in the desktop app's
+    # picker sends nothing (verified 2026-09-23), while a typed `/model` always reaches the hook.
+    command = f"/model {event.get('to_model') or alias}"
     if config.lang == "ko":
         basis = {"configured": " (설정된 단가 기준)", "default": " (기본 단가로 추정)"}.get(pricing, " (API 정가 기준)")
         cost = f"약 ${usd:,.2f}{basis}" if usd is not None else "비용 추정 불가"
@@ -135,7 +139,7 @@ def message(event: dict, tokens: int, usd: float | None, config: Config) -> str:
             f"대화 {size} 토큰을 {target}에 다시 씁니다 — {cost}. "
             f"이 작업에만 {target}가 필요하면 전환 대신 \"이 부분은 {alias} 서브에이전트로 처리해줘\"라고 "
             f"맡기면 메인 세션의 캐시가 유지됩니다. 그래도 바꾸려면 {config.confirm_seconds}초 안에 "
-            f"같은 모델을 다시 선택하세요."
+            f"`{command}`를 입력하세요 (모델 선택기에서 같은 모델을 다시 누르면 전달되지 않을 수 있습니다)."
         )
     basis = {"configured": " (your configured pricing)", "default": " (default tier, model unknown)"}.get(pricing, " at list price")
     cost = f"about ${usd:,.2f}{basis}" if usd is not None else "cost unknown"
@@ -143,7 +147,8 @@ def message(event: dict, tokens: int, usd: float | None, config: Config) -> str:
         f"cachekeeper: switching {source} → {target} forfeits the warm {ttl} cache and re-caches "
         f"{size} tokens on {target} — {cost}. If only this task needs {target}, ask for a "
         f"{alias} subagent instead and the main session's cache stays warm. To switch anyway, "
-        f"pick the same model again within {config.confirm_seconds}s."
+        f"type `{command}` within {config.confirm_seconds}s (picking the same model again in a "
+        f"model picker may not reach Claude Code)."
     )
 
 

@@ -72,6 +72,24 @@ The first live run found a bug the unit tests had not: resuming the session fire
 cleared only by the switch it asked about (`tests/test_guard.py`,
 `test_a_resume_restoring_the_model_keeps_the_pending_ask`).
 
+## The guard in the Claude desktop app
+
+The installed plugin (0.1.0 from the marketplace) in the desktop app, with the default `$1` threshold; the app's own
+log (`~/.config/Claude/logs/main.log`) shows each `LocalSessions.setModel` it sends to Claude Code.
+
+| time | action | app log | guard | result |
+|---|---|---|---|---|
+| 14:50:24 | switch a test session (141k tokens) Opus 5.5 → Fable 5.1 through the app | `setModel` | `ask` ($2.83) | blocked with the message; no dialog |
+| 14:50:38 | the same switch again | `setModel` | `allow` | switched |
+| 14:59:03 | model picker in a 829k-token session: Opus 5.5 → Fable 5.1 | `setModel` | `ask` ($16.59) | blocked with the message |
+| (after) | picked Fable 5.1 again in the picker | **nothing sent** | — | the picker showed Fable 5.1; the session stayed on Opus 5.5 and kept reading its cache |
+| 15:04:04 | typed `/model opus` in the test session (now on Fable 5.1) | `setModel` | `ask` ($1.13) | blocked with the message |
+| 15:04:25 | typed `/model opus` again | `setModel` | `allow` | `Set model to opus (claude-opus-5-5)` |
+
+Every app-routed switch arrives as `source: sdk`, the picker's and a typed `/model`'s alike, and the app shows no
+dialog for `ask`. Confirming by a repeat works when the repeat is actually sent; picking the model the picker
+already displays is not. 0.1.1 therefore names a typed `/model <resolved id>` as the confirmation.
+
 ## Limits of these numbers
 
 - One person's 30 days, on one machine, weighted at list prices.
@@ -80,5 +98,5 @@ cleared only by the switch it asked about (`tests/test_guard.py`,
 - `prompt_cache_warm` covers the current model's cache only: switching back to a model used within the TTL can
   hit that model's own entry. 4 of the 29 asks were not followed by a full rebuild.
 - "Other" rebuilds (3.1%) have no cause the transcript shows: tool-definition changes, Claude Code upgrades, images.
-- Whether the Claude desktop app shows the `ask` as a dialog or blocks like a headless session was not tested; the
-  repeat-to-confirm path works in either case.
+- After a blocked switch the desktop app's picker can keep showing the model that was refused. That display is the
+  app's; the guard cannot correct it, only tell the user to confirm with a typed `/model`.

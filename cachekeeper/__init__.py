@@ -9,4 +9,4 @@ Two parts, both local and dependency-free:
   compaction, session start).
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"

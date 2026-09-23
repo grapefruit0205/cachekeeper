@@ -36,11 +36,13 @@ Claude Code already knows what a switch costs: its `PreModelSwitch` hook input c
 ```
 cachekeeper: switching opus-5 → fable-5-1 forfeits the warm 1h cache and re-caches 452k tokens on
 fable-5-1 — about $9.04 at list price. If only this task needs fable-5-1, ask for a fable subagent
-instead and the main session's cache stays warm. To switch anyway, pick the same model again within 120s.
+instead and the main session's cache stays warm. To switch anyway, type `/model claude-fable-5-1`
+within 120s (picking the same model again in a model picker may not reach Claude Code).
 ```
 
 - In a terminal session Claude Code shows that as its confirmation dialog.
-- A session that cannot show a dialog (headless `-p`, and possibly other clients) blocks the switch with that text; **asking for the same switch again within 120 seconds is the confirmation**. Verified live: the first `/model sonnet` was blocked with the message, the second went through (`Set model to Sonnet 5`).
+- **In the Claude desktop app** — where the model picker and a typed `/model` both reach Claude Code as an app request — and in headless `-p` sessions there is no dialog: the switch is blocked with that text, and **typing the `/model` command it names within 120 seconds is the confirmation**. Verified in the desktop app on 2026-09-23: `/model opus` was blocked with the message; the same command 21 seconds later switched the session.
+- Don't confirm by picking the same model again in the desktop app's picker. After a blocked switch the picker can keep showing the new model while the session stays on the old one, and picking it again sends nothing. If the picker disagrees with the session, pick the session's current model to bring them back in line.
 - Switches with a cold cache, small contexts, automatic fallbacks and resume restores pass silently: `PreModelSwitch` only fires for `/model`, the picker and SDK calls.
 - A subagent keeps the main cache: its call and result are appended to the conversation, and it builds its own cache on its own model.
 
