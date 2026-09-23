@@ -1,9 +1,10 @@
 # cachekeeper
 
-**Stop throwing away a warm prompt cache by accident.** A Claude Code plugin with two parts:
+**Stop throwing away a warm prompt cache by accident.** A Claude Code plugin with three parts:
 
 - a **model-switch guard**: before `/model` or the model picker forfeits a warm cache, it asks — with the size of the loss and the alternative that keeps the cache;
-- **`cachekeeper audit`**: reads your own transcripts and attributes every cache rebuild to its cause, so you know which habit costs you the most.
+- **`cachekeeper audit`**: reads your own transcripts and attributes every cache rebuild to its cause, so you know which habit costs you the most — and `cachekeeper keepalive` finds how long a keep-alive would have paid off for you;
+- an opt-in **keep-alive**: while you are away, one short request every 55 minutes keeps a long session's cache warm, for as long as that is cheaper than the rebuild.
 
 [한국어](README.ko.md)
 
@@ -78,9 +79,24 @@ which keep-alive policy (how long to keep a session warm, and from what context 
 
 Shares are weighted at API list prices. How a subscription counts usage is not published, so treat them as "which part of my usage is this", not as a bill.
 
-## Keep-alive is not included — on purpose
+## Keep-alive (opt-in)
 
-Several projects already keep an idle session's cache warm, each with a different mechanism. Pick one after running the audit: its keep-alive line tells you whether pings would have paid for themselves on your history (on the author's: pings 2.2% of usage, prevented rebuilds 4.5%, net +2.3%).
+Coming back to a session after more than an hour re-caches the whole conversation. With `CACHEKEEPER_KEEPALIVE=1`, cachekeeper keeps a long session's cache warm while you are away, for as long as that is cheaper than the rebuild:
+
+- When a turn ends, a `Stop` hook waits in the background (an `asyncRewake` hook: Claude Code wakes the model only if it exits with code 2). 55 minutes after the last request started, it wakes the model, which replies `(keep-alive)`: one request that reads the cache at about 0.1× the input price and starts its hour again. For a 300k-token Opus 5.5 conversation that is about $0.06 per ping against $2.40 for the rebuild, at list price.
+- Only for conversations of at least 100k tokens on the one-hour cache, and at most 3 pings in a row; the cache then lasts one more hour, about 3¾ hours after you left. Your next message starts the count again.
+- It stands down when you write, when another turn ends, when the model is switched (the next request re-caches anyway), after `/compact`, and when the machine slept past the hour. `claude -p` runs are left alone.
+
+Which numbers pay off depends on how you take breaks. `cachekeeper keepalive` replays your history and prints the best policy with the settings to paste. On the author's: sessions of at least 100k tokens kept for up to 3 hours — 126 pings (1.1% of usage) would have prevented 20 rebuilds (4.1%), net +3.0%. Keeping every session warm for 24 hours nets less (+1.9%): pinging through the night costs about what the morning rebuild does.
+
+| variable | default | effect |
+|---|---|---|
+| `CACHEKEEPER_KEEPALIVE` | off | `1` turns it on |
+| `CACHEKEEPER_KEEPALIVE_MIN_TOKENS` | `100000` | smaller conversations are left to expire |
+| `CACHEKEEPER_KEEPALIVE_HOURS` | `3` | how long to keep pinging after your last message |
+| `CACHEKEEPER_KEEPALIVE_MINUTES` | `55` | idle minutes before each ping |
+
+`cachekeeper events` lists the pings and why each wait stood down. Other projects keep sessions warm with other mechanisms:
 
 | project | mechanism |
 |---|---|
@@ -99,7 +115,7 @@ claude plugin marketplace add grapefruit0205/cachekeeper
 claude plugin install cachekeeper@cachekeeper
 ```
 
-Needs Python 3.8+ (the hook stays silent and lets every switch through without one) and a Claude Code with `PreModelSwitch` hooks. To try a checkout: `claude --plugin-dir /path/to/cachekeeper`.
+Needs Python 3.8+ (the hook stays silent and lets every switch through without one) and a Claude Code with `PreModelSwitch` hooks (and `asyncRewake` hooks for the keep-alive; 2.1.280 has both). To try a checkout: `claude --plugin-dir /path/to/cachekeeper`.
 
 | variable | default | effect |
 |---|---|---|
@@ -116,6 +132,7 @@ Set them in the `env` block of `~/.claude/settings.json`.
 
 - `prompt_cache_warm` describes the current model's cache. Switching back to a model you used within the TTL can hit that model's own entry, so the rebuild is smaller than asked about: in the replay, 25 of the 29 asks were followed by a real rebuild.
 - The replays model what the guard and a keep-alive would have done; what they save depends on your answers and your breaks.
+- Each keep-alive ping is a short turn you can see in the conversation, and it counts toward your usage like any request.
 - The guard only sees switches that Claude Code routes through `PreModelSwitch`. Effort changes invalidate the cache on most models too (not on Opus 5.5 and Fable 5.1); Claude Code asks about those itself while the cache is warm.
 
 ## Tests

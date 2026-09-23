@@ -1,0 +1,317 @@
+"""Keep a long session's prompt cache warm while its user is away — only while it pays.
+
+Claude Code keeps the main conversation's prompt cache for an hour after the
+last request started (on a subscription within plan usage; five minutes
+otherwise). Coming back later writes the whole conversation into the cache
+again: for a 300k-token Opus conversation, a few dollars at list price. One
+short request before the hour is up reads the cache instead, for about a
+twentieth of that, and starts the hour again.
+
+The keep-alive is a Stop hook with ``asyncRewake``: when a turn ends, Claude
+Code runs ``wait`` in the background, and if it exits with code 2, wakes the
+model with what it printed. ``wait``
+
+* returns 0 at once unless the conversation is at least ``min_context`` tokens,
+  its cache lives an hour, and fewer than ``max_pings`` pings have followed the
+  user's last message;
+* otherwise sleeps until ``interval`` (55 minutes) after the last request
+  started and returns 2: the model answers one word, which reads the cache and
+  restarts the hour, and the Stop hook of that short turn starts the next wait;
+* returns 0 as soon as something else happens first: the user writes, another
+  turn ends, the model is switched, the session is gone, or the machine slept
+  past the hour.
+
+After ``max_pings`` pings in a row (3, about three hours) it lets the cache
+expire: on the author's history, pinging longer cost about what the rebuild it
+would save does (see ``cachekeeper keepalive``). ``plan`` holds the decision and
+is pure; ``wait`` is the loop around it.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable
+
+from .transcripts import parse_time
+
+POLL_SECONDS = 30
+LATE_SECONDS = 60           # closer than this to the hour's end, a ping may land after the cache is gone
+KEEP_PINGS_SECONDS = 86_400
+REPLY = "(keep-alive)"
+MARK = "keep-alive ping"      # in every ping, so a ping is never mistaken for the user
+# Who counts as the user coming back: someone typing, another session's message, a channel message.
+# Background-task notifications (the pings among them), automatic continuations and plugin messages do not.
+ARRIVALS = ("human", "peer", "channel", "person")
+
+
+@dataclass(frozen=True)
+class Policy:
+    interval: int = 55 * 60
+    max_pings: int = 3
+    min_context: int = 100_000
+
+    @staticmethod
+    def from_env(env: dict[str, str] | None = None) -> "Policy":
+        env = dict(os.environ if env is None else env)
+
+        def number(key: str, default: float) -> float:
+            try:
+                value = float(env.get(key, "") or default)
+            except ValueError:
+                return default
+            return value if value >= 0 else default
+
+        minutes = number("CACHEKEEPER_KEEPALIVE_MINUTES", 55) or 55
+        hours = number("CACHEKEEPER_KEEPALIVE_HOURS", 3)
+        return Policy(
+            interval=int(minutes * 60),
+            max_pings=int(hours * 3600 // (minutes * 60)),
+            min_context=int(number("CACHEKEEPER_KEEPALIVE_MIN_TOKENS", 100_000)),
+        )
+
+
+def enabled(env: dict[str, str]) -> bool:
+    return env.get("CACHEKEEPER_KEEPALIVE", "").strip().lower() in ("1", "on", "true", "yes")
+
+
+@dataclass(frozen=True)
+class View:
+    """What the transcript says about the session's cache, as epoch seconds and tokens."""
+    anchor: float | None = None      # when the last main-conversation request started
+    last_human: float = 0.0          # the user's last message, or another session's (0 when none is in view)
+    context: int = 0                 # tokens the next request re-sends; 0 right after a compaction
+    ttl: int | None = None           # 3600 or 300 from the last cache write; None when none is in view
+
+
+def plan(view: View, pings: list[float], started_at: float, now: float, policy: Policy) -> tuple[str, float, str]:
+    """``("ping", 0, "")``, ``("wait", seconds, "")`` or ``("stop", 0, reason)`` for one look at the session."""
+    ttl = view.ttl or 3600
+    if view.anchor is None:
+        return "stop", 0.0, "no request"
+    if view.context < policy.min_context:
+        return "stop", 0.0, "small"
+    if ttl < 3600:
+        return "stop", 0.0, "5-minute cache"
+    if view.last_human > started_at:
+        return "stop", 0.0, "user back"     # the Stop hook of the user's turn takes over
+    if sum(1 for at in pings if at > view.last_human) >= policy.max_pings:
+        return "stop", 0.0, "cap"
+    if now >= view.anchor + ttl - LATE_SECONDS:
+        return "stop", 0.0, "late"          # the machine slept, or the hook started late: the cache is gone
+    deadline = view.anchor + policy.interval
+    if now >= deadline:
+        return "ping", 0.0, ""
+    return "wait", deadline - now, ""
+
+
+def _epoch(value: object) -> float | None:
+    parsed = parse_time(value)
+    return parsed.timestamp() if parsed else None
+
+
+def _is_arrival(entry: dict) -> bool:
+    content = (entry.get("message") or {}).get("content")
+    if isinstance(content, list):
+        if any(isinstance(block, dict) and block.get("type") == "tool_result" for block in content):
+            return False
+        content = " ".join(str(block.get("text", "")) for block in content if isinstance(block, dict))
+    text = str(content or "").lstrip()
+    if MARK in text:
+        return False
+    origin = entry.get("origin")
+    if isinstance(origin, dict):
+        return origin.get("kind") in ARRIVALS
+    # Transcripts from before `origin` existed: plain text the user typed.
+    if entry.get("isMeta") or entry.get("isCompactSummary"):
+        return False
+    return bool(text) and not text.startswith(("<", "["))
+
+
+def view_of(lines: list[str]) -> tuple[View, bool]:
+    """Read transcript lines; the flag says whether the last request's start and a user message were in view."""
+    times: dict[str, float] = {}
+    first_block: dict[str, dict] = {}
+    last_id: str | None = None
+    last_usage: dict = {}
+    last_human = 0.0
+    ttl: int | None = None
+    compacted = False
+    for line in lines:
+        if '"timestamp"' not in line:
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict) or entry.get("isSidechain"):
+            continue
+        at = _epoch(entry.get("timestamp"))
+        if at is None:
+            continue
+        if isinstance(entry.get("uuid"), str):
+            times[entry["uuid"]] = at
+        kind = entry.get("type")
+        message = entry.get("message") if isinstance(entry.get("message"), dict) else {}
+        if kind == "assistant" and isinstance(message.get("usage"), dict):
+            if str(message.get("model", "")).startswith("<"):
+                continue            # synthetic messages (errors, interruptions) made no request
+            message_id = str(message.get("id") or entry.get("requestId") or entry.get("uuid"))
+            first_block.setdefault(message_id, entry)
+            last_id, last_usage = message_id, message["usage"]
+            split = last_usage.get("cache_creation")
+            if isinstance(split, dict):
+                if int(split.get("ephemeral_1h_input_tokens") or 0):
+                    ttl = 3600
+                elif int(split.get("ephemeral_5m_input_tokens") or 0):
+                    ttl = 300
+            compacted = False
+        elif kind == "user" and _is_arrival(entry):
+            last_human = at
+        elif kind == "system" and entry.get("subtype") == "compact_boundary":
+            compacted = True
+    anchor = None
+    if last_id is not None:
+        first = first_block[last_id]
+        anchor = times.get(str(first.get("parentUuid"))) or _epoch(first.get("timestamp"))
+        if last_human > (anchor or 0):
+            anchor = last_human     # a message sent after it: its request is the latest
+    context = 0 if compacted else sum(int(last_usage.get(key) or 0) for key in (
+        "input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "output_tokens"))
+    return View(anchor, last_human, context, ttl), (anchor is not None and last_human > 0)
+
+
+def read_view(transcript: Path, window: int = 2_000_000, limit: int = 64_000_000) -> View:
+    """The transcript's view, reading back from the end until the last request and a user message are in it."""
+    try:
+        with open(transcript, "rb") as stream:
+            size = stream.seek(0, os.SEEK_END)
+            while True:
+                start = max(0, size - window)
+                stream.seek(start)
+                lines = stream.read(size - start).decode("utf-8", "replace").splitlines()
+                if start:
+                    lines = lines[1:]   # the first line is cut
+                view, complete = view_of(lines)
+                if complete or start == 0 or window >= limit:
+                    return view
+                window *= 8
+    except OSError:
+        return View()
+
+
+def state_path(directory: Path, session: str) -> Path:
+    safe = "".join(ch for ch in session if ch.isalnum() or ch in "-_") or "unknown"
+    return directory / "keepalive" / f"{safe}.json"
+
+
+def read_state(path: Path) -> dict:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def write_state(path: Path, state: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}")
+    temporary.write_text(json.dumps(state), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _alive(pid: int) -> bool:
+    if os.name != "posix":
+        return True                     # os.kill(pid, 0) terminates the process on Windows
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def message(view: View, pings: int, now: float, policy: Policy) -> str:
+    idle = max(0, round((now - (view.anchor or now)) / 60))
+    return (f"{MARK} {pings} of {policy.max_pings}, not an error: this session has been idle for {idle} min and "
+            f"its prompt cache ({view.context / 1000:,.0f}k tokens) expires an hour after the last request. This "
+            f"turn only keeps it warm while the user is away. Reply with exactly {REPLY} and nothing else: no "
+            f"tools, no summary.")
+
+
+def wait(event: dict, env: dict[str, str], directory: Path, *, now: Callable[[], float] = time.time,
+         sleep: Callable[[float], None] = time.sleep, err=None,
+         log: Callable[[dict], None] | None = None) -> int:
+    """The Stop hook's background wait. Returns 2 to wake the model for one ping, else 0.
+
+    ``log`` receives one record per wait that ran: how it ended, and why.
+    """
+    err = err or sys.stderr
+    if not enabled(env) or env.get("CLAUDE_CODE_ENTRYPOINT") == "sdk-cli":
+        return 0                        # `claude -p` runs asyncRewake hooks in the foreground
+    transcript = Path(str(event.get("transcript_path") or ""))
+    session = str(event.get("session_id") or "")
+    if not session or not transcript.is_file():
+        return 0
+    policy = Policy.from_env(env)
+    code, reason, view = _wait(transcript, session, directory, policy, env, now, sleep, err)
+    if log is not None:
+        log({"at": round(now(), 3), "event": "keepalive", "session_id": session,
+             "decision": "ping" if code == 2 else "stop", "reason": reason,
+             "context_tokens": view.context, "idle_seconds": round(now() - view.anchor) if view.anchor else None,
+             "policy": {"interval": policy.interval, "max_pings": policy.max_pings, "min_context": policy.min_context}})
+    return code
+
+
+def _wait(transcript: Path, session: str, directory: Path, policy: Policy, env: dict[str, str],
+          now: Callable[[], float], sleep: Callable[[float], None], err) -> tuple[int, str, View]:
+    path = state_path(directory, session)
+    started_at = now()
+    generation = f"{os.getpid()}-{started_at}"
+    state = read_state(path)
+    state["generation"] = generation
+    state["pings"] = [at for at in state.get("pings", []) if isinstance(at, (int, float))
+                      and started_at - at < KEEP_PINGS_SECONDS]
+    write_state(path, state)
+    owner = int(env.get("CLAUDE_PID") or 0)
+    seen: tuple[float, int] | None = None
+    view = View()
+    while True:
+        state = read_state(path)
+        if state.get("generation") != generation:
+            return 0, "superseded", view    # a later turn ended or the model was switched
+        if owner and not _alive(owner):
+            return 0, "gone", view
+        try:
+            stat = transcript.stat()
+        except OSError:
+            return 0, "gone", view
+        if seen != (stat.st_mtime, stat.st_size):
+            seen, view = (stat.st_mtime, stat.st_size), read_view(transcript)
+        current = now()
+        pings = [float(at) for at in state.get("pings", [])]
+        action, seconds, reason = plan(view, pings, started_at, current, policy)
+        if action == "stop":
+            return 0, reason, view
+        if action == "ping":
+            count = sum(1 for at in pings if at > view.last_human) + 1
+            state["pings"] = pings + [current]
+            state["generation"] = None
+            write_state(path, state)
+            err.write(message(view, count, current, policy) + "\n")
+            return 2, f"{count}/{policy.max_pings}", view
+        sleep(min(POLL_SECONDS, max(1.0, seconds)))
+
+
+def switched(directory: Path, session: str) -> None:
+    """A model switch happened: the next request rebuilds anyway, so a pending wait stands down."""
+    path = state_path(directory, session)
+    state = read_state(path)
+    if state.get("generation"):
+        state["generation"] = None
+        write_state(path, state)

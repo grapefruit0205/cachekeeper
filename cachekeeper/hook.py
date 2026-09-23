@@ -1,10 +1,11 @@
-"""Hook entry point: ``python -m cachekeeper.hook pre-model-switch|post-model-switch|user-prompt-submit``.
+"""Hook entry point: ``python -m cachekeeper.hook pre-model-switch|post-model-switch|user-prompt-submit|stop``.
 
 Reads the event from stdin, answers on stdout, and appends one line per event to
 ``events.jsonl`` in the plugin's data directory (no prompt text, no file
 contents: model ids, token counts and the decision). A PreModelSwitch hook that
 fails or times out blocks the switch, so every error path here stays silent and
-lets the switch through.
+lets the switch through. ``stop`` is the keep-alive's background wait: its exit
+code (2 wakes the model) is the answer.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from . import keepalive
 from .guard import Config, at_stake, decide, delegation, offer_for
 
 MAX_EVENT_BYTES = 1_000_000
@@ -107,6 +109,8 @@ def handle(kind: str, raw: str, env: dict[str, str] | None = None, now: float | 
             if isinstance(entry, dict) and entry.get("to_model") == event.get("to_model"):
                 entries.pop(session)
                 write_pending(path, entries)
+        if event.get("source") != "resume":
+            keepalive.switched(directory, session)  # the next request rebuilds anyway: no ping for it
         log_event(directory, record_for("post", event, "switched"))
         return ""
     if kind == "user-prompt-submit":
@@ -135,6 +139,12 @@ def main(argv: list[str] | None = None) -> int:
         raw = sys.stdin.read(MAX_EVENT_BYTES + 1)
         if len(raw) > MAX_EVENT_BYTES or len(argv) != 1:
             return 0
+        if argv[0] == "stop":
+            event = json.loads(raw)
+            if not isinstance(event, dict):
+                return 0
+            directory = data_dir()
+            return keepalive.wait(event, dict(os.environ), directory, log=lambda record: log_event(directory, record))
         output = handle(argv[0], raw)
         if output:
             sys.stdout.write(output)

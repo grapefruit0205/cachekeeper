@@ -86,6 +86,12 @@ def events_summary(directory: Path, limit: int) -> str:
         except ValueError:
             continue
     pre = [r for r in records if r.get("event") == "pre"]
+    waits = [r for r in records if r.get("event") == "keepalive"]
+    pings = [r for r in waits if r.get("decision") == "ping"]
+    reasons: dict[str, int] = {}
+    for r in waits:
+        if r.get("decision") != "ping":
+            reasons[str(r.get("reason"))] = reasons.get(str(r.get("reason")), 0) + 1
     post = [r for r in records if r.get("event") == "post" and r.get("source") != "resume"]
     asks = [r for r in pre if r.get("decision") == "ask"]
     lines = [
@@ -94,9 +100,16 @@ def events_summary(directory: Path, limit: int) -> str:
         f"{sum(r.get('decision') == 'allow' for r in pre)}; switches that happened: {len(post)} "
         f"(automatic: {sum(r.get('source') == 'auto' for r in post)}; resume restores not counted)",
         f"estimated rewrite behind the asks: ${sum(r.get('estimated_cache_write_usd') or 0 for r in asks):,.2f}",
+        f"keep-alive: {len(pings)} pings in {len({r.get('session_id') for r in pings})} sessions; waits that stood down: "
+        + (", ".join(f"{reason} {count}" for reason, count in sorted(reasons.items(), key=lambda kv: -kv[1])) or "none"),
         "",
     ]
     for r in records[-limit:]:
+        if r.get("event") == "keepalive":
+            idle = r.get("idle_seconds")
+            lines.append(f"keep {r.get('decision'):8} {r.get('reason') or '-':12} {r.get('context_tokens') or 0:>9,} tok  "
+                         f"idle {'-' if idle is None else f'{idle / 60:.0f} min'}")
+            continue
         lines.append(f"{r.get('event'):4} {r.get('decision'):8} {r.get('source') or '-':7} "
                      f"{r.get('from_model')} -> {r.get('to_model')}  {r.get('context_tokens', 0):>9,} tok  "
                      f"warm={r.get('prompt_cache_warm')}  ${r.get('estimated_cache_write_usd') or 0:,.2f}")
@@ -139,6 +152,14 @@ def keepalive_report(projects: Path, days: int, lang: str) -> str:
                    f"Best: sessions of at least {best['min_context'] // 1000}k tokens, up to {best['cap_hours']:g} h — "
                    f"{best['pings']} pings ({best['cost'] / total:.1%} of usage) prevent {best['prevented']} rebuilds "
                    f"({best['saved'] / total:.1%}): net {best['net'] / total:+.1%}")]
+    if best["net"] <= 0:
+        lines.append("이 기록에서는 keep-alive가 이득이 아니었습니다. 끈 채로 두세요." if ko else
+                     "On this history a keep-alive would not have paid off: leave it off.")
+        return "\n".join(lines)
+    setting = (f'"CACHEKEEPER_KEEPALIVE": "1", "CACHEKEEPER_KEEPALIVE_MIN_TOKENS": "{best["min_context"]}", '
+               f'"CACHEKEEPER_KEEPALIVE_HOURS": "{best["cap_hours"]:g}"')
+    lines += [("이 정책으로 켜려면 ~/.claude/settings.json의 \"env\"에 추가하세요:" if ko else
+               "To turn it on with this policy, add to \"env\" in ~/.claude/settings.json:"), "  " + setting]
     return "\n".join(lines)
 
 

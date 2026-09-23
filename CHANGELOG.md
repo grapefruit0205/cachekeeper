@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0 — 2026-09-23
+
+- Keep-alive, opt-in with `CACHEKEEPER_KEEPALIVE=1`: a `Stop` hook with `asyncRewake` waits in the background after
+  each turn and, 55 minutes after the last request started, wakes the model for a one-word reply that reads the
+  cache and starts its hour again. Only for conversations of at least 100k tokens on the one-hour cache, and at
+  most 3 pings after the user's last message (`CACHEKEEPER_KEEPALIVE_MIN_TOKENS`, `_HOURS`, `_MINUTES`). It stands
+  down when the user writes, another turn ends, the model is switched, after `/compact`, when the machine slept
+  past the hour, and in `claude -p` runs, where Claude Code would run the hook in the foreground.
+- `cachekeeper keepalive` ends with the settings for the best policy on your history, or says to leave it off.
+- `cachekeeper events` lists keep-alive pings and why each wait stood down.
+
 ## 0.2.0 — 2026-09-23
 
 - A refused switch now offers to run just the next request on the other model: a `UserPromptSubmit` hook tells
