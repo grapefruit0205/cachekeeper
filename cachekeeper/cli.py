@@ -103,6 +103,45 @@ def events_summary(directory: Path, limit: int) -> str:
     return "\n".join(lines)
 
 
+def keepalive_report(projects: Path, days: int, lang: str) -> str:
+    """How idle stretches are distributed, and which keep-alive policy would have paid off."""
+    import datetime as dt
+    from .audit import GAP_BUCKETS, idle_gaps, keepalive_policy
+    from .transcripts import read_sessions
+
+    now = dt.datetime.now(dt.timezone.utc)
+    gaps, total = idle_gaps(read_sessions(projects, now - dt.timedelta(days=days)))
+    if not total:
+        return "no usage found"
+    ko = lang == "ko"
+    lines = [("쉬는 구간 분포 (1시간 TTL 세션, 55분 이상)" if ko else "Idle stretches (one-hour TTL sessions, 55 min or more)"),
+             f"  {'구간' if ko else 'length':<11}{'횟수' if ko else 'count':>7}{'재구축' if ko else 'rebuilt':>8}{'재구축 비중' if ko else 'rebuild share':>14}"]
+    for low, high, label in GAP_BUCKETS:
+        inside = [g for g in gaps if low <= g.seconds < high]
+        rebuilt = [g for g in inside if g.rebuild_cost]
+        lines.append(f"  {label:<11}{len(inside):>7}{len(rebuilt):>8}{sum(g.rebuild_cost for g in rebuilt) / total:>14.1%}")
+    lines += ["", ("정책별 순효과 (핑 비용 − 막은 재구축, 사용량 대비)" if ko else "Net effect by policy (prevented rebuilds − ping cost, share of usage)"),
+              f"  {'최소 맥락' if ko else 'min context':<12}" + "".join(f"{f'{c:g}h':>8}" for c in (1, 2, 3, 4, 6, 8, 12, 24))]
+    best = None
+    for minimum in (0, 100_000, 200_000, 300_000, 500_000):
+        row = []
+        for cap in (1, 2, 3, 4, 6, 8, 12, 24):
+            policy = keepalive_policy(gaps, cap, minimum)
+            row.append(policy["net"] / total)
+            if best is None or policy["net"] > best["net"]:
+                best = policy
+        lines.append(f"  {f'{minimum // 1000}k':<12}" + "".join(f"{v:>+8.1%}" for v in row))
+    assert best is not None
+    lines += ["", (f"가장 좋은 조합: 맥락 {best['min_context'] // 1000}k 이상인 세션만, 최대 {best['cap_hours']:g}시간 — "
+                   f"핑 {best['pings']}번(사용량의 {best['cost'] / total:.1%})으로 재구축 {best['prevented']}번"
+                   f"(사용량의 {best['saved'] / total:.1%})을 막아 순효과 {best['net'] / total:+.1%}"
+                   if ko else
+                   f"Best: sessions of at least {best['min_context'] // 1000}k tokens, up to {best['cap_hours']:g} h — "
+                   f"{best['pings']} pings ({best['cost'] / total:.1%} of usage) prevent {best['prevented']} rebuilds "
+                   f"({best['saved'] / total:.1%}): net {best['net'] / total:+.1%}")]
+    return "\n".join(lines)
+
+
 def events_dir() -> Path:
     """The hook's data directory: CLAUDE_PLUGIN_DATA when set (inside hooks), else the
     plugin data directory Claude Code gave this plugin, else ~/.cachekeeper."""
@@ -127,7 +166,15 @@ def main(argv: list[str] | None = None) -> int:
     audit.add_argument("--json", action="store_true")
     events = commands.add_parser("events", help="what the guard saw and answered")
     events.add_argument("--limit", type=int, default=20)
+    keep = commands.add_parser("keepalive", help="which keep-alive policy would have paid off on your history")
+    keep.add_argument("--days", type=int, default=30)
+    keep.add_argument("--projects", type=Path, default=Path.home() / ".claude" / "projects")
+    keep.add_argument("--lang", choices=("ko", "en"))
     args = parser.parse_args(argv)
+
+    if args.command == "keepalive":
+        print(keepalive_report(args.projects, args.days, args.lang or language(dict(os.environ))))
+        return 0
 
     if args.command == "audit":
         report = run(args.projects, args.days, min_usd=args.min_usd, cap_hours=args.cap_hours).to_json()

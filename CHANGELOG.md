@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0 — 2026-09-23
+
+- A refused switch now offers to run just the next request on the other model: a `UserPromptSubmit` hook tells
+  the main model to hand that one message to a subagent on the requested model (`fable`, `opus`, `sonnet` or
+  `haiku`) with a self-contained brief, so the session keeps its model and its warm cache. A typed `/model`
+  still switches the session; confirming the switch or 15 minutes without a message withdraw the offer.
+  Verified live: Opus 5.5 delegated; Haiku 4.5 received the instruction and ignored it three times out of three.
+  The subagent tool is `Agent` in the desktop app and `Task` in the headless CLI; the instruction names both.
+- `cachekeeper keepalive`: the distribution of idle stretches in one-hour-TTL sessions and the net effect of a
+  55-minute keep-alive by cap (1-24 h) and minimum context size, with the best policy on your history.
+
 ## 0.1.1 — 2026-09-23
 
 - The confirmation the guard asks for is now a typed `/model <resolved model id>`. Verified in the Claude desktop

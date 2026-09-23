@@ -90,6 +90,33 @@ Every app-routed switch arrives as `source: sdk`, the picker's and a typed `/mod
 dialog for `ask`. Confirming by a repeat works when the repeat is actually sent; picking the model the picker
 already displays is not. 0.1.1 therefore names a typed `/model <resolved id>` as the confirmation.
 
+## Keep-alive policy
+
+`cachekeeper keepalive` on the same corpus (idle stretches of 55 minutes or more in one-hour-TTL sessions):
+
+| idle stretch | count | rebuilt | rebuild share of usage |
+|---|---|---|---|
+| 1-2 h | 18 | 14 | 2.8% |
+| 2-4 h | 9 | 7 | 1.5% |
+| 4-8 h | 5 | 2 | 0.2% |
+| 8-24 h | 20 | 13 | 2.0% |
+| 24 h+ | 4 | 3 | 0.8% |
+
+Net effect (prevented rebuilds minus pings, share of usage) peaks at a **3-hour cap for sessions of at least 100k
+tokens: +3.0%** (126 pings, 1.1% of usage, prevent 20 rebuilds worth 4.1%). An 8-hour cap nets +2.3%, 24 hours
++1.9%: pinging through the night costs about what the morning rebuild would. Breaks longer than a few hours are
+better met with `/compact` before leaving.
+
+## Run just this task on the other model, live
+
+0.2.0 dev build, headless sessions, `CACHEKEEPER_MIN_USD=0`. After `/model sonnet` was refused, the next message
+("Write one short sentence explaining what a prompt cache is.") carried the delegation instruction:
+
+- Haiku 4.5 as the main model, three runs: the instruction reached the model (visible in the transcript) and it
+  answered itself each time. The first run also named only the `Agent` tool, which the headless CLI calls `Task`.
+- Opus 5.5 as the main model: `Agent` with `model: "sonnet"` and a one-line brief; Sonnet 5 wrote the answer
+  (200 output tokens) and the reply ended "(Sonnet wrote this in a subagent. This session is still on Opus.)".
+
 ## Limits of these numbers
 
 - One person's 30 days, on one machine, weighted at list prices.

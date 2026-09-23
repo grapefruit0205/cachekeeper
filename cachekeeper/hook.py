@@ -1,4 +1,4 @@
-"""Hook entry point: ``python -m cachekeeper.hook pre-model-switch|post-model-switch``.
+"""Hook entry point: ``python -m cachekeeper.hook pre-model-switch|post-model-switch|user-prompt-submit``.
 
 Reads the event from stdin, answers on stdout, and appends one line per event to
 ``events.jsonl`` in the plugin's data directory (no prompt text, no file
@@ -16,7 +16,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from .guard import Config, at_stake, decide
+from .guard import Config, at_stake, decide, delegation, offer_for
 
 MAX_EVENT_BYTES = 1_000_000
 
@@ -76,8 +76,10 @@ def handle(kind: str, raw: str, env: dict[str, str] | None = None, now: float | 
         return ""
     directory = data_dir(env)
     pending_path = directory / "pending.json"
+    offers_path = directory / "offers.json"
+    session = str(event.get("session_id", ""))
+    config = Config.from_env(env)
     if kind == "pre-model-switch":
-        config = Config.from_env(env)
         output, pending = decide(event, read_pending(pending_path), now, config)
         write_pending(pending_path, pending)
         if output is None:
@@ -86,20 +88,44 @@ def handle(kind: str, raw: str, env: dict[str, str] | None = None, now: float | 
             decision = "warn"
         else:
             decision = output["hookSpecificOutput"]["permissionDecision"]
+        offers = read_pending(offers_path)
+        offer = offer_for(event) if decision == "ask" else None
+        if offer:
+            offers[session] = {**offer, "at": now}
+        elif decision == "allow":
+            offers.pop(session, None)   # confirmed: the session itself switches
+        write_pending(offers_path, offers)
         log_event(directory, record_for("pre", event, decision))
         return json.dumps(output, ensure_ascii=False) if output else ""
     if kind == "post-model-switch":
-        # The switch the guard asked about happened (confirmed in a dialog): drop the pending ask.
-        # A different switch — a resume restoring the session's model, an automatic fallback —
-        # leaves it in place, so the user's repeat still counts as the confirmation.
-        pending = read_pending(pending_path)
-        session = str(event.get("session_id", ""))
-        entry = pending.get(session)
-        if isinstance(entry, dict) and entry.get("to_model") == event.get("to_model"):
-            pending.pop(session)
-            write_pending(pending_path, pending)
+        # The switch the guard asked about happened (confirmed in a dialog): drop the pending ask
+        # and the subagent offer. A different switch — a resume restoring the session's model, an
+        # automatic fallback — leaves both in place, so the user's repeat still counts.
+        for path in (pending_path, offers_path):
+            entries = read_pending(path)
+            entry = entries.get(session)
+            if isinstance(entry, dict) and entry.get("to_model") == event.get("to_model"):
+                entries.pop(session)
+                write_pending(path, entries)
         log_event(directory, record_for("post", event, "switched"))
         return ""
+    if kind == "user-prompt-submit":
+        # The first ordinary message after a refused switch is the request the user meant for the
+        # other model: hand it to a subagent on that model. Slash commands (a `/model` confirming
+        # the switch, anything else) leave the offer for the next message.
+        prompt = str(event.get("prompt", ""))
+        offers = read_pending(offers_path)
+        offer = offers.get(session)
+        if not isinstance(offer, dict) or prompt.lstrip().startswith("/"):
+            return ""
+        offers.pop(session)
+        write_pending(offers_path, offers)
+        if now - float(offer.get("at", 0)) > config.offer_seconds:
+            return ""
+        log_event(directory, {"at": round(now, 3), "event": "prompt", "session_id": session,
+                              "from_model": offer.get("from_model"), "to_model": offer.get("to_model"),
+                              "decision": "delegate"})
+        return json.dumps(delegation(offer, config.lang), ensure_ascii=False)
     return ""
 
 

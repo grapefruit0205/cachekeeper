@@ -1,5 +1,5 @@
 {
-  "description": "cachekeeper: before a /model or picker switch forfeits a warm prompt cache, ask with the size of the loss and the alternative that keeps the cache; log every switch for `cachekeeper events`.",
+  "description": "cachekeeper: before a /model or picker switch forfeits a warm prompt cache, ask with the size of the loss and offer to run just the next request in a subagent on that model; log every switch for `cachekeeper events`.",
   "hooks": {
     "PreModelSwitch": [
       {
@@ -18,6 +18,17 @@
           {
             "type": "command",
             "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run\" post-model-switch",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run\" user-prompt-submit",
             "timeout": 10
           }
         ]

@@ -196,6 +196,57 @@ def _replay_keepalive(report: Report, previous: Request, request: Request, ttl: 
         report.keepalive_saved_count += 1
 
 
+@dataclass
+class Gap:
+    """An idle stretch of at least one ping interval in a one-hour-TTL session."""
+    seconds: float
+    context: int          # what the next request re-sends
+    read_price: float     # $/MTok to re-read it once
+    rebuild_cost: float   # what the next request wrote because of the gap (0 when it did not rebuild)
+
+
+GAP_BUCKETS = ((55 * 60, 3600, "55-60 min"), (3600, 2 * 3600, "1-2 h"), (2 * 3600, 4 * 3600, "2-4 h"),
+               (4 * 3600, 8 * 3600, "4-8 h"), (8 * 3600, 24 * 3600, "8-24 h"), (24 * 3600, float("inf"), "24 h+"))
+
+
+def idle_gaps(sessions: list[Session]) -> tuple[list[Gap], float]:
+    """Every idle stretch a keep-alive could have covered, and the total usage cost for shares."""
+    gaps: list[Gap] = []
+    total = 0.0
+    for session in sessions:
+        previous: Request | None = None
+        for request in session.requests:
+            if price_for(request.model) is None:
+                continue
+            total += sum(request_cost(request).values())
+            if previous is not None and session.ttl_seconds >= 3600:
+                seconds = (request.at - previous.at).total_seconds()
+                price = price_for(previous.model)
+                if seconds >= PING_SECONDS and price is not None:
+                    idle = is_rebuild(request) and classify(previous, request, session) == "idle expiry"
+                    gaps.append(Gap(seconds, previous.next_context, price.cache_read,
+                                    write_cost(request) if idle else 0.0))
+            previous = request
+    return gaps, total
+
+
+def keepalive_policy(gaps: list[Gap], cap_hours: float, min_context: int) -> dict[str, float]:
+    """Ping every 55 idle minutes up to ``cap_hours``, only when the context is at least ``min_context``."""
+    cost = saved = 0.0
+    pings = prevented = 0
+    for gap in gaps:
+        if gap.context < min_context:
+            continue
+        count = int(min(gap.seconds, cap_hours * 3600) // PING_SECONDS)
+        pings += count
+        cost += count * gap.context * gap.read_price / 1_000_000
+        if gap.rebuild_cost and gap.seconds < count * PING_SECONDS + 3600:
+            saved += gap.rebuild_cost
+            prevented += 1
+    return {"cap_hours": cap_hours, "min_context": min_context, "pings": pings, "cost": cost,
+            "saved": saved, "prevented": prevented, "net": saved - cost}
+
+
 def run(projects: Path, days: int, min_usd: float = 1.0, cap_hours: float = 8.0,
         now: dt.datetime | None = None) -> Report:
     now = now or dt.datetime.now(dt.timezone.utc)

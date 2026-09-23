@@ -131,5 +131,51 @@ class HookTests(unittest.TestCase):
         self.assertEqual(handle("unknown-event", json.dumps(EVENT), self.env), "")
 
 
+class OfferTests(unittest.TestCase):
+    """A refused switch offers to run the next request in a subagent on that model."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.env = {"CLAUDE_PLUGIN_DATA": self.directory.name, "LANG": "ko_KR.UTF-8"}
+
+    def prompt(self, text, now):
+        output = handle("user-prompt-submit", json.dumps({"session_id": "s1", "prompt": text}), self.env, now=now)
+        return json.loads(output) if output else None
+
+    def test_the_refusal_offers_a_subagent_and_the_next_request_is_delegated(self):
+        asked = json.loads(handle("pre-model-switch", json.dumps(EVENT), self.env, now=100.0))
+        reason = asked["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn("이 작업만 fable로 하시겠습니까?", reason)
+        self.assertIn("지금 모델(opus-5)로 이어집니다", reason)
+        delegated = self.prompt("이 버그 원인을 찾아줘", 160.0)
+        context = delegated["hookSpecificOutput"]["additionalContext"]
+        self.assertIn('(Agent, or Task in some Claude Code versions) with model "fable"', context)
+        self.assertIn("self-contained brief", context)
+        self.assertIn("fable 서브에이전트", delegated["systemMessage"])
+        self.assertIsNone(self.prompt("다음 질문", 170.0))  # one request only
+
+    def test_a_slash_command_keeps_the_offer_for_the_next_message(self):
+        handle("pre-model-switch", json.dumps(EVENT), self.env, now=100.0)
+        self.assertIsNone(self.prompt("/cost", 110.0))
+        self.assertIsNotNone(self.prompt("이제 해줘", 120.0))
+
+    def test_confirming_the_switch_withdraws_the_offer(self):
+        handle("pre-model-switch", json.dumps(EVENT), self.env, now=100.0)
+        handle("pre-model-switch", json.dumps(EVENT), self.env, now=110.0)   # repeat: allow
+        handle("post-model-switch", json.dumps(EVENT), self.env, now=111.0)
+        self.assertIsNone(self.prompt("이 버그 원인을 찾아줘", 120.0))
+
+    def test_an_old_offer_is_dropped(self):
+        handle("pre-model-switch", json.dumps(EVENT), self.env, now=100.0)
+        self.assertIsNone(self.prompt("이 버그 원인을 찾아줘", 100.0 + 901))
+
+    def test_no_offer_for_a_model_a_subagent_cannot_run(self):
+        other = {**EVENT, "to_model": "deepseek-v4.1-flash", "requested_model": "deepseek-v4.1-flash"}
+        asked = json.loads(handle("pre-model-switch", json.dumps(other), self.env, now=100.0))
+        self.assertNotIn("하시겠습니까", asked["hookSpecificOutput"]["permissionDecisionReason"])
+        self.assertIsNone(self.prompt("이 버그 원인을 찾아줘", 110.0))
+
+
 if __name__ == "__main__":
     unittest.main()

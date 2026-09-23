@@ -46,6 +46,19 @@ within 120s (picking the same model again in a model picker may not reach Claude
 - Switches with a cold cache, small contexts, automatic fallbacks and resume restores pass silently: `PreModelSwitch` only fires for `/model`, the picker and SDK calls.
 - A subagent keeps the main cache: its call and result are appended to the conversation, and it builds its own cache on its own model.
 
+### Run just this task on the other model
+
+The refusal also offers the cheaper way to get the other model's work: **send the request you meant for the other
+model as your next message, and a subagent on that model handles it** while the session stays on its model and
+its cache stays warm. A `UserPromptSubmit` hook tells the main model to delegate that one message (Agent tool,
+`model: "fable"`, a self-contained brief — the subagent does not see the conversation, so the main model writes it
+what it needs); later messages run normally. Typing the `/model` command instead switches the session as before.
+
+Verified live on 2026-09-23 with Opus 5.5 as the main model: after a refused switch the next request went to a
+subagent on the other model (`Agent`, `model: "sonnet"`) and the answer ended with "This session is still on
+Opus". With Haiku 4.5 as the main model the instruction reached the model and was ignored three times out of
+three, so the offer is as reliable as the main model's instruction-following.
+
 Every switch request and every switch that happens is logged to `events.jsonl` in the plugin's data directory — model ids, token counts, the estimate and the decision; no prompt text. `cachekeeper events` summarizes it.
 
 ## The audit
@@ -55,7 +68,8 @@ cachekeeper audit            # last 30 days, in your locale's language (ko/en)
 cachekeeper audit --days 7 --json
 ```
 
-or `/cachekeeper:audit` inside a session. It reads `~/.claude/projects/*/*.jsonl` (main sessions; subagents are left out), counts each API response once even when a resumed session copied it into another file, and reports:
+or `/cachekeeper:audit` inside a session. `cachekeeper keepalive` shows how your idle stretches are distributed and
+which keep-alive policy (how long to keep a session warm, and from what context size) would have paid off. It reads `~/.claude/projects/*/*.jsonl` (main sessions; subagents are left out), counts each API response once even when a resumed session copied it into another file, and reports:
 
 - what your usage is made of (cache read, cache write, output, input);
 - every rebuild, attributed to the first cause that explains it: session start, manual or automatic model switch, effort change, compaction, idle expiry, other;
@@ -93,6 +107,7 @@ Needs Python 3.8+ (the hook stays silent and lets every switch through without o
 | `CACHEKEEPER_MIN_USD` | `1.0` | ask only when the estimated rewrite costs at least this much |
 | `CACHEKEEPER_MIN_TOKENS` | `100000` | threshold when the new model's price is unknown |
 | `CACHEKEEPER_CONFIRM_SECONDS` | `120` | how long a repeat counts as the confirmation |
+| `CACHEKEEPER_OFFER_SECONDS` | `900` | how long the next message is handed to a subagent after a refusal |
 | `CACHEKEEPER_LANG` | from `LANG` | `ko` or `en` |
 
 Set them in the `env` block of `~/.claude/settings.json`.
