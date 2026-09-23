@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1 — 2026-09-23
+
+- The policy pick no longer turns on noise: among the combinations within 1% of the best net saving, the one
+  with the fewest pings wins, then the larger minimum context. On the author's history the exact best had
+  become "every session" because the 57k-token live-test session added $0.20; it is "sessions of at least 100k
+  tokens, 3 hours" again.
+
 ## 0.4.0 — 2026-09-23
 
 - `CACHEKEEPER_KEEPALIVE=auto`: the keep-alive's minimum context and cap are recomputed once a day from the local

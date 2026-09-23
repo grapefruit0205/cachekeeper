@@ -31,9 +31,18 @@ class DecideTests(unittest.TestCase):
     def test_breaks_the_pings_can_bridge_set_the_cap(self):
         decision = autopolicy.decide([gap(1.5, start=i * 3600) for i in range(12)], NOW, 1, 1)
         self.assertEqual(decision["source"], "history")
-        # One ping bridges a 90-minute break: a one-hour cap saves as much as any longer one, with fewer pings.
-        self.assertEqual((decision["cap_hours"], decision["min_context"]), (1.0, 0))
+        # One ping bridges a 90-minute break: a one-hour cap saves as much as any longer one, with fewer pings;
+        # every minimum up to 300k saves the same, and the largest leaves more small sessions alone.
+        self.assertEqual((decision["cap_hours"], decision["min_context"]), (1.0, 300_000))
         self.assertEqual(decision["prevented"], 12)
+
+    def test_a_near_tie_goes_to_fewer_pings(self):
+        # A small session's break adds a few cents: not worth pinging every small session for.
+        gaps = [gap(1.5, start=i * 3600) for i in range(12)] + [gap(1.5, context=50_000, rebuild=0.1, start=99_000)]
+        decision = autopolicy.decide(gaps, NOW, 1, 1)
+        self.assertEqual((decision["min_context"], decision["pings"]), (300_000, 12))
+        exact = autopolicy.decide(gaps[:12] + [gap(1.5, context=50_000, rebuild=3.0, start=99_000)], NOW, 1, 1)
+        self.assertEqual(exact["min_context"], 0)       # a real difference still wins
 
     def test_too_little_history_uses_the_defaults(self):
         decision = autopolicy.decide([gap(1.5, start=i) for i in range(9)], NOW, 1, 1)

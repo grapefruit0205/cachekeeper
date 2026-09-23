@@ -301,15 +301,17 @@ def keepalive_policy(gaps: list[Gap], cap_hours: float, min_context: int) -> dic
             "saved": saved, "prevented": prevented, "net": saved - cost}
 
 
-def best_policy(gaps: list[Gap]) -> dict[str, float]:
-    """The combination of minimum context and cap with the largest net saving (ties go to fewer pings)."""
-    best = keepalive_policy(gaps, CAPS_HOURS[0], MIN_CONTEXTS[-1])
-    for minimum in MIN_CONTEXTS:
-        for cap in CAPS_HOURS:
-            policy = keepalive_policy(gaps, cap, minimum)
-            if (policy["net"], -policy["pings"]) > (best["net"], -best["pings"]):
-                best = policy
-    return best
+def best_policy(gaps: list[Gap], tolerance: float = 0.01) -> dict[str, float]:
+    """The combination of minimum context and cap to use.
+
+    The largest net saving, except that among the combinations within ``tolerance`` of it the one with the
+    fewest pings wins, then the larger minimum context: a few weeks of history cannot tell such near-ties
+    apart, and every ping is a turn the user sees.
+    """
+    policies = [keepalive_policy(gaps, cap, minimum) for minimum in MIN_CONTEXTS for cap in CAPS_HOURS]
+    top = max(policy["net"] for policy in policies)
+    near = [policy for policy in policies if policy["net"] >= top - abs(top) * tolerance]
+    return min(near, key=lambda policy: (policy["pings"], -policy["min_context"], -policy["net"]))
 
 
 def run(projects: Path, days: int, min_usd: float = 1.0, cap_hours: float = 8.0,
