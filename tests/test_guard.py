@@ -28,7 +28,7 @@ class DecideTests(unittest.TestCase):
         self.assertEqual(specific["permissionDecision"], "ask")
         self.assertIn("450k tokens", specific["permissionDecisionReason"])
         self.assertIn("$9.00", specific["permissionDecisionReason"])
-        self.assertIn("fable subagent", specific["permissionDecisionReason"])
+        self.assertIn("fable-5-1 subagent", specific["permissionDecisionReason"])
         # The confirmation is a typed command with the resolved id: re-picking in the desktop
         # app's picker sends nothing, and an alias can resolve to another version.
         self.assertIn("`/model claude-fable-5-1` within 120s", specific["permissionDecisionReason"])
@@ -146,14 +146,25 @@ class OfferTests(unittest.TestCase):
     def test_the_refusal_offers_a_subagent_and_the_next_request_is_delegated(self):
         asked = json.loads(handle("pre-model-switch", json.dumps(EVENT), self.env, now=100.0))
         reason = asked["hookSpecificOutput"]["permissionDecisionReason"]
-        self.assertIn("이 작업만 fable로 하시겠습니까?", reason)
+        self.assertIn("이 작업만 fable-5-1로 하시겠습니까?", reason)
         self.assertIn("지금 모델(opus-5)로 이어집니다", reason)
         delegated = self.prompt("이 버그 원인을 찾아줘", 160.0)
         context = delegated["hookSpecificOutput"]["additionalContext"]
-        self.assertIn('(Agent, or Task in some Claude Code versions) with model "fable"', context)
+        self.assertIn('(Agent, or Task in some Claude Code versions) with model "claude-fable-5-1" '
+                      '(if that model id is not accepted, "fable")', context)
         self.assertIn("self-contained brief", context)
-        self.assertIn("fable 서브에이전트", delegated["systemMessage"])
+        self.assertIn("fable-5-1 서브에이전트", delegated["systemMessage"])
         self.assertIsNone(self.prompt("다음 질문", 170.0))  # one request only
+
+    def test_from_fable_the_subagent_runs_on_the_exact_opus_asked_for(self):
+        # `opus` would resolve to Opus 5.5 here; the user asked for Opus 5.
+        back = {**EVENT, "from_model": "claude-fable-5-1", "to_model": "claude-opus-5", "requested_model": "claude-opus-5",
+                "estimated_cache_write_usd": 4.5}
+        asked = json.loads(handle("pre-model-switch", json.dumps(back), self.env, now=100.0))
+        self.assertIn("이 작업만 opus-5로 하시겠습니까?", asked["hookSpecificOutput"]["permissionDecisionReason"])
+        context = self.prompt("이 설계를 검토해줘", 130.0)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn('with model "claude-opus-5" (if that model id is not accepted, "opus")', context)
+        self.assertIn("continue here on fable-5-1", context)
 
     def test_a_slash_command_keeps_the_offer_for_the_next_message(self):
         handle("pre-model-switch", json.dumps(EVENT), self.env, now=100.0)

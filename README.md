@@ -51,9 +51,11 @@ within 120s (picking the same model again in a model picker may not reach Claude
 
 The refusal also offers the cheaper way to get the other model's work: **send the request you meant for the other
 model as your next message, and a subagent on that model handles it** while the session stays on its model and
-its cache stays warm. A `UserPromptSubmit` hook tells the main model to delegate that one message (Agent tool,
-`model: "fable"`, a self-contained brief — the subagent does not see the conversation, so the main model writes it
-what it needs); later messages run normally. Typing the `/model` command instead switches the session as before.
+its cache stays warm. A `UserPromptSubmit` hook tells the main model to delegate that one message (Agent tool
+with the exact model you asked for, e.g. `model: "claude-fable-5-1"`, falling back to the alias `fable`; a
+self-contained brief — the subagent does not see the conversation, so the main model writes it what it needs);
+later messages run normally. It works in every direction: from Fable, `/model claude-opus-5` offers an Opus 5
+subagent. Typing the `/model` command instead switches the session as before.
 
 Verified live on 2026-09-23 with Opus 5.5 as the main model: after a refused switch the next request went to a
 subagent on the other model (`Agent`, `model: "sonnet"`) and the answer ended with "This session is still on

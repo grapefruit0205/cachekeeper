@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2 — 2026-09-23
+
+- The subagent offered after a refused switch runs on the exact model asked for: `claude-opus-5`, not the alias
+  `opus`, which resolves to Opus 5.5 by default (Claude Code 2.1.280 accepts full model ids for subagents; the
+  alias stays as the fallback). The question and the notice name that model too.
+
 ## 0.4.1 — 2026-09-23
 
 - The policy pick no longer turns on noise: among the combinations within 1% of the best net saving, the one
