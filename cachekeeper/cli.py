@@ -1,4 +1,4 @@
-"""``cachekeeper audit`` and ``cachekeeper events``."""
+"""``cachekeeper audit``, ``keepalive``, ``compaction`` and ``events``."""
 
 from __future__ import annotations
 
@@ -218,11 +218,20 @@ def main(argv: list[str] | None = None) -> int:
     audit.add_argument("--json", action="store_true")
     events = commands.add_parser("events", help="what the guard saw and answered")
     events.add_argument("--limit", type=int, default=20)
+    compact = commands.add_parser("compaction", help="what an earlier auto-compaction would have saved and cost")
+    compact.add_argument("--days", type=int, default=30)
+    compact.add_argument("--projects", type=Path, default=Path.home() / ".claude" / "projects")
+    compact.add_argument("--lang", choices=("ko", "en"))
     keep = commands.add_parser("keepalive", help="which keep-alive policy would have paid off on your history")
     keep.add_argument("--days", type=int, default=30)
     keep.add_argument("--projects", type=Path, default=Path.home() / ".claude" / "projects")
     keep.add_argument("--lang", choices=("ko", "en"))
     args = parser.parse_args(argv)
+
+    if args.command == "compaction":
+        from .compaction import run as compaction_run
+        print(compaction_run(args.projects, args.days, args.lang or language(dict(os.environ))))
+        return 0
 
     if args.command == "keepalive":
         print(keepalive_report(args.projects, args.days, args.lang or language(dict(os.environ)), events_dir()))

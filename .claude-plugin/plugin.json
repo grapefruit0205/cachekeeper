@@ -1,7 +1,7 @@
 {
   "name": "cachekeeper",
   "displayName": "cachekeeper",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "Stop throwing away a warm prompt cache by accident: ask before a model switch forfeits it (with the cost Claude Code computes), and audit which causes your cache rebuilds come from.",
   "author": {
     "name": "Junseok Pak",

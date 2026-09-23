@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0 — 2026-09-23
+
+- `cachekeeper compaction`: replays the local history with a smaller auto-compact window (200k-800k tokens):
+  the context grows as it really did, each compaction reads it, writes a summary and continues from the size
+  real compactions left behind plus what the model reads again, and later requests and rebuilds carry the
+  smaller context. It prints compactions a day, reads and rebuilds saved, the compactions' cost, and the net
+  under a normal and a cautious reread assumption. On the author's 13 days: +40% at 300k, +37% at 400k (+35% and
+  +32% when every compaction costs 60k of rereading), cost only.
+
 ## 0.4.2 — 2026-09-23
 
 - The subagent offered after a refused switch runs on the exact model asked for: `claude-opus-5`, not the alias

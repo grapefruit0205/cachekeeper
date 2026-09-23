@@ -3,7 +3,7 @@
 **Stop throwing away a warm prompt cache by accident.** A Claude Code plugin with three parts:
 
 - a **model-switch guard**: before `/model` or the model picker forfeits a warm cache, it asks — with the size of the loss and the alternative that keeps the cache;
-- **`cachekeeper audit`**: reads your own transcripts and attributes every cache rebuild to its cause, so you know which habit costs you the most — and `cachekeeper keepalive` finds how long a keep-alive would have paid off for you;
+- **`cachekeeper audit`**: reads your own transcripts and attributes every cache rebuild to its cause, so you know which habit costs you the most — `cachekeeper keepalive` finds how long a keep-alive would have paid off for you, and `cachekeeper compaction` what compacting earlier would have saved;
 - an opt-in **keep-alive**: while you are away, one short request every 55 minutes keeps a long session's cache warm, for as long as that is cheaper than the rebuild.
 
 [한국어](README.ko.md)
@@ -80,6 +80,26 @@ which keep-alive policy (how long to keep a session warm, and from what context 
 - a replay of a 55-minute keep-alive: what the pings would have cost against the idle rebuilds they would have prevented.
 
 Shares are weighted at API list prices. How a subscription counts usage is not published, so treat them as "which part of my usage is this", not as a bill.
+
+## How long to let a session grow
+
+Every request re-reads the whole conversation, so a long session pays for its length on every turn: on the author's history, requests re-sent 400k tokens at the median, and the part of the context beyond 300k tokens cost 24% of all usage in re-reads alone. Claude Code compacts automatically only near the model's whole window (1M for the current models; the author's sessions compacted at about 970k). The `autoCompactWindow` setting (or `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, 100k-1M tokens) makes it compact earlier.
+
+```
+cachekeeper compaction       # what an earlier compaction would have saved and cost, on your history
+```
+
+It replays every session with a smaller window: the context grows by what the real one grew by; past the window, a compaction reads it, writes a summary, and the conversation goes on from the size real compactions left behind (median 70k on the author's history) plus what the model reads again. On the author's 13 days:
+
+| window | compactions a day | net | net if the model rereads 60k after each |
+|---|---|---|---|
+| 200k | 17 | +42% | +29% |
+| 300k | 9 | +40% | +35% |
+| 400k | 5 | +37% | +32% |
+| 600k | 4 | +28% | +25% |
+| 800k | 2 | +14% | +13% |
+
+That is cost only. A compaction loses what its summary leaves out, a smaller window loses it more often, and whether that costs more than a long context is a question about the work, not the bill. Compacting yourself with `/compact` when a piece of work is done — with a note of what to keep — keeps more than a compaction wherever the window happens to fall; the window is the safety net for when you don't. Claude Code's own `/config` text recommends the automatic window "for the best cost and performance"; this replay is the history-specific number to weigh against it.
 
 ## Keep-alive (opt-in)
 
