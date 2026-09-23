@@ -13,6 +13,10 @@
 - `cachekeeper audit` and `cachekeeper keepalive` say how much history they actually read: on the author's
   machine 12 days, not the 30 the earlier docs said; the docs are corrected.
 - Waits that stand down at once (small or five-minute-cache sessions) are no longer logged.
+- 0.3.0's keep-alive measured live in the desktop app: pings 55 and 110 minutes after the last message each
+  read the cache, and a message 112 minutes after the last one cost $0.015 instead of $0.46 (Opus 5.5, 57k
+  tokens). `asyncRewake` wakes an idle desktop session, the cap holds, a message from another session counts as
+  the user, and settings edits apply to the next wait without a restart.
 
 ## 0.3.0 — 2026-09-23
 

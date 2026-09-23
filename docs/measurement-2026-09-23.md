@@ -45,8 +45,8 @@ Reading it:
   all between Opus 5 and Fable 5.1) and coming back after more than an hour (7.3%).
 - **The guard's reach:** 29 questions in 12 days, two or three a day, with 5.6% of usage behind them. What it
   saves is the part of that where the answer would have been "use a subagent" or "not now".
-- **A keep-alive pays for itself here, modestly:** +2.3% net at an 8-hour cap. That is why the plugin points to
-  the existing keep-alive projects instead of adding another one.
+- **A keep-alive pays for itself here, modestly:** +2.3% net at an 8-hour cap, and +3.0% for sessions of at
+  least 100k tokens at a 3-hour cap (next section). The keep-alive added in 0.3.0 uses that policy by default.
 
 ## A correction this tool made
 
@@ -117,6 +117,43 @@ better met with `/compact` before leaving.
   answered itself each time. The first run also named only the `Agent` tool, which the headless CLI calls `Task`.
 - Opus 5.5 as the main model: `Agent` with `model: "sonnet"` and a one-line brief; Sonnet 5 wrote the answer
   (200 output tokens) and the reply ended "(Sonnet wrote this in a subagent. This session is still on Opus.)".
+
+## Keep-alive, live
+
+Claude Code 2.1.280 in the Claude desktop app, cachekeeper 0.3.0 from the marketplace, a disposable Opus 5.5
+session (effort max) in a project whose `.claude/settings.json` turned the keep-alive on with
+`CACHEKEEPER_KEEPALIVE_MIN_TOKENS=0`, so that the 57k-token test session qualified. First a 2-minute interval with
+3 pings, then, by editing the same settings file, a 55-minute interval with 2 pings. Times are UTC; costs at list
+price (Opus 5.5: cache read $0.20, one-hour write $8, output $20 per MTok).
+
+| time | what | cache read | cache write | output | cost |
+|---|---|---|---|---|---|
+| 06:56:17 | first message | 36,207 | 18,051 | 264 | $0.157 |
+| 06:58:17 | ping 1 of 3, 2 min after it | 54,258 | 598 | 345 | $0.023 |
+| 07:00:17 | ping 2 of 3 | 55,203 | 334 | 9 | $0.014 |
+| 07:02:17 | ping 3 of 3; the next wait stops at the cap | 55,548 | 334 | 44 | $0.015 |
+| 07:03:24 | a message from another session; settings now 55 min, 2 pings | 55,928 | 281 | 158 | $0.017 |
+| 07:58:24 | ping 1 of 2, 55 min after it | 56,369 | 334 | 9 | $0.014 |
+| 08:53:24 | ping 2 of 2, 110 min after the last message | 56,714 | 334 | 9 | $0.014 |
+| 08:55:21 | a message 112 min after the last one (keep-alive switched off first) | 57,059 | 287 | 58 | $0.015 |
+
+- **Every ping was one request that read the cache**: 287-598 tokens written (the ping and the reply), nothing
+  rebuilt. The ping 110 minutes after the last message still read it, so the ping before had restarted the
+  hour. The message at 112 minutes cost $0.015; writing its 57k tokens again would have cost $0.46. The whole
+  test cost $0.27.
+- **The wake**: an `asyncRewake` Stop hook that exits 2 wakes an idle desktop session. The ping arrives as a
+  task notification (`origin.kind: "task-notification"`) with the summary `cachekeeper keep-alive ping`
+  (`rewakeSummary`) and the text `cachekeeper: keep-alive ping 1 of 3, …` (`rewakeMessage`); Opus 5.5 answered
+  `(keep-alive)` each time, without tools.
+- **Timing**: the pings landed 120 and 3,300 seconds after the start of the last request, to the second; the
+  wait reads the start from the transcript entry each request was sent after.
+- **Stopping**: after the last ping of the cap the next wait stood down and nothing more happened. A message
+  from another session (`origin.kind: "peer"`) counted as the user coming back. Editing the project's
+  `settings.json` changed the next wait's settings without restarting the session (the waiting process's
+  environment showed the new values), and switching it off took effect the same way. The hook receives
+  `CLAUDE_PID`, which the wait uses to stop when its session is gone.
+- **Not measured here**: breaks of several hours in everyday use, and whether the desktop app keeps an idle
+  session running much longer than the two hours this one ran.
 
 ## Limits of these numbers
 
