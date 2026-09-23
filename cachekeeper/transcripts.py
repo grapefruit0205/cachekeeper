@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Iterable, Iterator
 
 MODEL_COMMAND = re.compile(r"<command-name>/model</command-name>.*?<command-args>(.*?)</command-args>", re.S)
+# In every message the keep-alive wakes the model with; the request answering it is a ping, not the user.
+PING_MARK = "keep-alive ping"
 
 
 @dataclass
@@ -30,6 +32,7 @@ class Request:
     write_5m: int = 0
     write_1h: int = 0
     output: int = 0
+    ping: bool = False    # answered a keep-alive ping rather than the user
 
     @property
     def context(self) -> int:
@@ -99,9 +102,10 @@ def read_session(path: Path, since: dt.datetime, seen: set[str]) -> Session:
     """Parse one transcript; ``seen`` collects message ids across files."""
     session = Session(path)
     by_id: dict[str, tuple[Request, int]] = {}
+    ping_pending = False
     with open(path, encoding="utf-8", errors="replace") as stream:
         for line in stream:
-            if not ('"assistant"' in line or "/model" in line or "compact_boundary" in line):
+            if not ('"assistant"' in line or "/model" in line or "compact_boundary" in line or PING_MARK in line):
                 continue
             try:
                 entry = json.loads(line)
@@ -125,7 +129,8 @@ def read_session(path: Path, since: dt.datetime, seen: set[str]) -> Session:
                 output = int(usage.get("output_tokens") or 0)
                 current = by_id.get(message_id)
                 if current is None:
-                    request = Request(at=at, model=model, effort=entry.get("effort"))
+                    request = Request(at=at, model=model, effort=entry.get("effort"), ping=ping_pending)
+                    ping_pending = False
                     _usage(request, usage)
                     by_id[message_id] = (request, output)
                     seen.add(message_id)
@@ -137,7 +142,10 @@ def read_session(path: Path, since: dt.datetime, seen: set[str]) -> Session:
                         _usage(request, usage)
                         by_id[message_id] = (request, output)
             elif kind == "user":
-                match = MODEL_COMMAND.search(_text(message.get("content")))
+                text = _text(message.get("content"))
+                if PING_MARK in text:
+                    ping_pending = True
+                match = MODEL_COMMAND.search(text)
                 if match:
                     session.markers.append(Marker(at, "model_command", match.group(1).strip()))
             elif kind == "system" and entry.get("subtype") == "compact_boundary":

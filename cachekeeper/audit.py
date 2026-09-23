@@ -33,6 +33,8 @@ from .transcripts import Request, Session, read_sessions
 
 REBUILD_MIN_TOKENS = 50_000
 PING_SECONDS = 55 * 60
+CAPS_HOURS = (1, 2, 3, 4, 6, 8, 12, 24)
+MIN_CONTEXTS = (0, 100_000, 200_000, 300_000, 500_000)
 CAUSES = ("session start", "model switch (manual)", "model switch (automatic)", "effort change",
           "compaction", "idle expiry", "other")
 
@@ -77,6 +79,17 @@ class Report:
     keepalive_cost: float = 0.0
     keepalive_saved: float = 0.0
     keepalive_saved_count: int = 0
+    first_at: dt.datetime | None = None
+    last_at: dt.datetime | None = None
+    pings_sent: int = 0          # keep-alive pings that actually ran
+    pings_cost: float = 0.0
+
+    @property
+    def history_days(self) -> float:
+        """How many days the history actually spans (it can be shorter than the window asked for)."""
+        if self.first_at is None or self.last_at is None:
+            return 0.0
+        return (self.last_at - self.first_at).total_seconds() / 86_400
 
     @property
     def total(self) -> float:
@@ -93,6 +106,8 @@ class Report:
         }
         return {
             "days": self.days,
+            "history_days": round(self.history_days, 1),
+            "first": self.first_at.date().isoformat() if self.first_at else None,
             "sessions": self.sessions,
             "requests": self.requests,
             "cost_share_by_class": {k: (v / self.total if self.total else 0.0) for k, v in self.cost_by_class.items()},
@@ -111,6 +126,8 @@ class Report:
                 "prevented_rebuilds": self.keepalive_saved_count,
                 "saved_share": self.keepalive_saved / self.total if self.total else 0.0,
                 "net_share": (self.keepalive_saved - self.keepalive_cost) / self.total if self.total else 0.0,
+                "pings_sent": self.pings_sent,
+                "pings_sent_share": self.pings_cost / self.total if self.total else 0.0,
             },
         }
 
@@ -136,21 +153,47 @@ def analyze(sessions: list[Session], days: int, min_usd: float = 1.0, cap_hours:
     for session in sessions:
         ttl = session.ttl_seconds
         previous: Request | None = None
+        pinged = False
         for request in session.requests:
             if price_for(request.model) is None:
                 continue
             report.requests += 1
+            report.first_at = min(report.first_at or request.at, request.at)
+            report.last_at = max(report.last_at or request.at, request.at)
             for key, value in request_cost(request).items():
                 report.cost_by_class[key] = report.cost_by_class.get(key, 0.0) + value
+            if request.ping:
+                # Usage like any other, but not the user: the replays measure the user's breaks around it.
+                report.pings_sent += 1
+                report.pings_cost += sum(request_cost(request).values())
+                pinged = True
+                continue
             rebuilt = is_rebuild(request)
             cause = classify(previous, request, session)
             if rebuilt:
                 report.rebuilds[cause].append((request.writes, write_cost(request)))
             if previous is not None:
                 _replay_guard(report, previous, request, session, ttl, rebuilt, min_usd)
-                _replay_keepalive(report, previous, request, ttl, rebuilt, cause, cap_hours)
-            previous = request
+                _replay_keepalive(report, previous, request, ttl, idle_rebuild_cost(previous, request, session, pinged),
+                                  cap_hours)
+            previous, pinged = request, False
     return report
+
+
+def idle_rebuild_cost(previous: Request, request: Request, session: Session, pinged: bool) -> float:
+    """What the break before ``request`` cost in cache writes.
+
+    The idle rebuild the request actually made; or, when keep-alive pings kept the cache through a break
+    longer than its TTL, the rebuild they prevented, estimated as the whole conversation written at the
+    one-hour rate, as an idle rebuild does; else nothing.
+    """
+    if is_rebuild(request) and classify(previous, request, session) == "idle expiry":
+        return write_cost(request)
+    price = price_for(previous.model)
+    seconds = (request.at - previous.at).total_seconds()
+    if pinged and price is not None and seconds >= session.ttl_seconds and request.model == previous.model:
+        return previous.next_context * price.write_1h / 1_000_000
+    return 0.0
 
 
 def _replay_guard(report: Report, previous: Request, request: Request, session: Session,
@@ -177,7 +220,7 @@ def _replay_guard(report: Report, previous: Request, request: Request, session: 
 
 
 def _replay_keepalive(report: Report, previous: Request, request: Request, ttl: int,
-                      rebuilt: bool, cause: str, cap_hours: float) -> None:
+                      rebuild_cost: float, cap_hours: float) -> None:
     if ttl < 3600:
         return
     gap = (request.at - previous.at).total_seconds()
@@ -191,8 +234,8 @@ def _replay_keepalive(report: Report, previous: Request, request: Request, ttl: 
     report.keepalive_pings += pings
     report.keepalive_cost += pings * previous.next_context * price.cache_read / 1_000_000
     # The last ping keeps the cache for one more TTL; past that the rebuild happens anyway.
-    if rebuilt and cause == "idle expiry" and gap < pings * PING_SECONDS + ttl:
-        report.keepalive_saved += write_cost(request)
+    if rebuild_cost and gap < pings * PING_SECONDS + ttl:
+        report.keepalive_saved += rebuild_cost
         report.keepalive_saved_count += 1
 
 
@@ -203,6 +246,8 @@ class Gap:
     context: int          # what the next request re-sends
     read_price: float     # $/MTok to re-read it once
     rebuild_cost: float   # what the next request wrote because of the gap (0 when it did not rebuild)
+    at: float = 0.0       # when it began (epoch seconds)
+    session: str = ""     # the transcript it is in
 
 
 GAP_BUCKETS = ((55 * 60, 3600, "55-60 min"), (3600, 2 * 3600, "1-2 h"), (2 * 3600, 4 * 3600, "2-4 h"),
@@ -210,23 +255,32 @@ GAP_BUCKETS = ((55 * 60, 3600, "55-60 min"), (3600, 2 * 3600, "1-2 h"), (2 * 360
 
 
 def idle_gaps(sessions: list[Session]) -> tuple[list[Gap], float]:
-    """Every idle stretch a keep-alive could have covered, and the total usage cost for shares."""
+    """Every idle stretch a keep-alive could have covered, and the total usage cost for shares.
+
+    Keep-alive pings are skipped: a stretch runs from one request of the user's to the next, and when pings
+    kept the cache through it, ``idle_rebuild_cost`` supplies the rebuild they prevented. Otherwise a policy
+    replayed on a history its own pings shaped would see only short breaks that never rebuilt, and turn off.
+    """
     gaps: list[Gap] = []
     total = 0.0
     for session in sessions:
         previous: Request | None = None
+        pinged = False
         for request in session.requests:
             if price_for(request.model) is None:
                 continue
             total += sum(request_cost(request).values())
+            if request.ping:
+                pinged = True
+                continue
             if previous is not None and session.ttl_seconds >= 3600:
                 seconds = (request.at - previous.at).total_seconds()
                 price = price_for(previous.model)
                 if seconds >= PING_SECONDS and price is not None:
-                    idle = is_rebuild(request) and classify(previous, request, session) == "idle expiry"
                     gaps.append(Gap(seconds, previous.next_context, price.cache_read,
-                                    write_cost(request) if idle else 0.0))
-            previous = request
+                                    idle_rebuild_cost(previous, request, session, pinged),
+                                    previous.at.timestamp(), session.path.stem))
+            previous, pinged = request, False
     return gaps, total
 
 
@@ -245,6 +299,17 @@ def keepalive_policy(gaps: list[Gap], cap_hours: float, min_context: int) -> dic
             prevented += 1
     return {"cap_hours": cap_hours, "min_context": min_context, "pings": pings, "cost": cost,
             "saved": saved, "prevented": prevented, "net": saved - cost}
+
+
+def best_policy(gaps: list[Gap]) -> dict[str, float]:
+    """The combination of minimum context and cap with the largest net saving (ties go to fewer pings)."""
+    best = keepalive_policy(gaps, CAPS_HOURS[0], MIN_CONTEXTS[-1])
+    for minimum in MIN_CONTEXTS:
+        for cap in CAPS_HOURS:
+            policy = keepalive_policy(gaps, cap, minimum)
+            if (policy["net"], -policy["pings"]) > (best["net"], -best["pings"]):
+                best = policy
+    return best
 
 
 def run(projects: Path, days: int, min_usd: float = 1.0, cap_hours: float = 8.0,

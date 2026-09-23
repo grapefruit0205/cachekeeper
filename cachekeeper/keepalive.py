@@ -37,13 +37,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from .transcripts import parse_time
+from . import autopolicy
+from .transcripts import PING_MARK as MARK, parse_time
 
 POLL_SECONDS = 30
+QUIET = ("small", "5-minute cache", "no request")    # immediate stand-downs at most turn ends: not logged
 LATE_SECONDS = 60           # closer than this to the hour's end, a ping may land after the cache is gone
 KEEP_PINGS_SECONDS = 86_400
 REPLY = "(keep-alive)"
-MARK = "keep-alive ping"      # in every ping, so a ping is never mistaken for the user
 # Who counts as the user coming back: someone typing, another session's message, a channel message.
 # Background-task notifications (the pings among them), automatic continuations and plugin messages do not.
 ARRIVALS = ("human", "peer", "channel", "person")
@@ -75,8 +76,28 @@ class Policy:
         )
 
 
-def enabled(env: dict[str, str]) -> bool:
-    return env.get("CACHEKEEPER_KEEPALIVE", "").strip().lower() in ("1", "on", "true", "yes")
+def mode(env: dict[str, str]) -> str:
+    """``fixed`` (the CACHEKEEPER_KEEPALIVE_* settings), ``auto`` (recomputed daily from history) or ``off``."""
+    value = env.get("CACHEKEEPER_KEEPALIVE", "").strip().lower()
+    if value == "auto":
+        return "auto"
+    return "fixed" if value in ("1", "on", "true", "yes") else "off"
+
+
+def policy_for(env: dict[str, str], directory: Path, now: float) -> Policy | None:
+    """The policy to wait under, or None when the keep-alive is off (by setting or by auto mode's verdict)."""
+    current = mode(env)
+    if current == "off":
+        return None
+    policy = Policy.from_env(env)
+    if current == "fixed":
+        return policy
+    decision = autopolicy.current(directory, env, now)
+    if decision.get("source") == "off":
+        return None
+    return Policy(interval=policy.interval,
+                  max_pings=int(float(decision.get("cap_hours", 0)) * 3600 // policy.interval),
+                  min_context=int(decision.get("min_context", 0)))
 
 
 @dataclass(frozen=True)
@@ -249,18 +270,21 @@ def wait(event: dict, env: dict[str, str], directory: Path, *, now: Callable[[],
          log: Callable[[dict], None] | None = None) -> int:
     """The Stop hook's background wait. Returns 2 to wake the model for one ping, else 0.
 
-    ``log`` receives one record per wait that ran: how it ended, and why.
+    ``log`` receives one record per wait that ran: how it ended, and why (not the immediate
+    stand-downs of small or five-minute-cache sessions, which happen at most turn ends).
     """
     err = err or sys.stderr
-    if not enabled(env) or env.get("CLAUDE_CODE_ENTRYPOINT") == "sdk-cli":
+    if mode(env) == "off" or env.get("CLAUDE_CODE_ENTRYPOINT") == "sdk-cli":
         return 0                        # `claude -p` runs asyncRewake hooks in the foreground
     transcript = Path(str(event.get("transcript_path") or ""))
     session = str(event.get("session_id") or "")
     if not session or not transcript.is_file():
         return 0
-    policy = Policy.from_env(env)
+    policy = policy_for(env, directory, now())
+    if policy is None or policy.max_pings <= 0:
+        return 0
     code, reason, view = _wait(transcript, session, directory, policy, env, now, sleep, err)
-    if log is not None:
+    if log is not None and reason not in QUIET:
         log({"at": round(now(), 3), "event": "keepalive", "session_id": session,
              "decision": "ping" if code == 2 else "stop", "reason": reason,
              "context_tokens": view.context, "idle_seconds": round(now() - view.anchor) if view.anchor else None,

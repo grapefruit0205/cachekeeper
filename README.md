@@ -10,7 +10,7 @@
 
 ## Why
 
-Claude Code re-sends the whole conversation on every turn; the prompt cache makes that cheap (a cache read bills at about 0.1× the input price). A rebuild writes the whole context again: 2× the input price with the one-hour TTL a subscription gets. On the author's last 30 days (131 main sessions, 8,664 requests), weighted at list prices:
+Claude Code re-sends the whole conversation on every turn; the prompt cache makes that cheap (a cache read bills at 0.1× the input price or less). A rebuild writes the whole context again: 2× the input price with the one-hour TTL a subscription gets. On the author's history — 12 days, 2026-09-11 to 09-23, 131 main sessions, 8,664 requests — weighted at list prices:
 
 | | share of all usage |
 |---|---|
@@ -65,7 +65,7 @@ Every switch request and every switch that happens is logged to `events.jsonl` i
 ## The audit
 
 ```
-cachekeeper audit            # last 30 days, in your locale's language (ko/en)
+cachekeeper audit            # the last 30 days (or as much history as there is), in your locale's language (ko/en)
 cachekeeper audit --days 7 --json
 ```
 
@@ -91,10 +91,12 @@ Which numbers pay off depends on how you take breaks. `cachekeeper keepalive` re
 
 | variable | default | effect |
 |---|---|---|
-| `CACHEKEEPER_KEEPALIVE` | off | `1` turns it on |
+| `CACHEKEEPER_KEEPALIVE` | off | `1`: on, with the settings below; `auto`: on, with the best policy on your history, recomputed daily |
 | `CACHEKEEPER_KEEPALIVE_MIN_TOKENS` | `100000` | smaller conversations are left to expire |
 | `CACHEKEEPER_KEEPALIVE_HOURS` | `3` | how long to keep pinging after your last message |
 | `CACHEKEEPER_KEEPALIVE_MINUTES` | `55` | idle minutes before each ping |
+
+With `auto`, the Stop hook redoes the `cachekeeper keepalive` replay once a day, in the background, and waits under the best policy it finds (the two settings above are then ignored). With fewer than 10 idle stretches to go on it uses the defaults; when no policy would have saved anything, or your sessions only use the five-minute cache, it stays off. Pings are left out of the replay — a three-hour break kept warm counts as the three-hour break it was, with the rebuild it avoided — so the policy does not talk itself out of the savings it makes. Claude Code deletes terminal transcripts 30 days after their last activity (desktop sessions are kept), so the idle stretches it has seen are also kept, as numbers only, in the plugin's data folder.
 
 `cachekeeper events` lists the pings and why each wait stood down. Other projects keep sessions warm with other mechanisms:
 
@@ -133,6 +135,7 @@ Set them in the `env` block of `~/.claude/settings.json`.
 - `prompt_cache_warm` describes the current model's cache. Switching back to a model you used within the TTL can hit that model's own entry, so the rebuild is smaller than asked about: in the replay, 25 of the 29 asks were followed by a real rebuild.
 - The replays model what the guard and a keep-alive would have done; what they save depends on your answers and your breaks.
 - Each keep-alive ping is a short turn you can see in the conversation, and it counts toward your usage like any request.
+- The keep-alive works only while the computer is awake and the session is open: a ping is a request the session itself makes. After a sleep that outlasted the hour it stands down instead of paying for a rebuild.
 - The guard only sees switches that Claude Code routes through `PreModelSwitch`. Effort changes invalidate the cache on most models too (not on Opus 5.5 and Fable 5.1); Claude Code asks about those itself while the cache is warm.
 
 ## Tests

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.0 — 2026-09-23
+
+- `CACHEKEEPER_KEEPALIVE=auto`: the keep-alive's minimum context and cap are recomputed once a day from the local
+  history, in the background Stop hook, as the best policy of the `cachekeeper keepalive` replay. With fewer than
+  10 idle stretches it uses the defaults (100k tokens, 3 hours); when no policy would have saved anything, or only
+  the five-minute cache is in use, it stays off. The idle stretches seen are also kept, as numbers only, in
+  `keepalive/gaps.jsonl`, because Claude Code deletes terminal transcripts 30 days after their last activity.
+- Keep-alive pings are left out of the replays: a break the pings kept warm counts as the whole break, with the
+  rebuild they prevented, so a policy does not argue itself off on the history its own pings shaped. `cachekeeper
+  audit` reports the pings actually sent.
+- `cachekeeper audit` and `cachekeeper keepalive` say how much history they actually read: on the author's
+  machine 12 days, not the 30 the earlier docs said; the docs are corrected.
+- Waits that stand down at once (small or five-minute-cache sessions) are no longer logged.
+
 ## 0.3.0 — 2026-09-23
 
 - Keep-alive, opt-in with `CACHEKEEPER_KEEPALIVE=1`: a `Stop` hook with `asyncRewake` waits in the background after

@@ -1,7 +1,8 @@
 # Measurement, 2026-09-23
 
 What the plugin is built on, measured on the author's own machine before it was built. The corpus is
-`~/.claude/projects/*/*.jsonl` for the last 30 days: main sessions only, each API response counted once. It is
+`~/.claude/projects/*/*.jsonl` for the last 30 days, which on this machine is 12 days (its history starts on
+2026-09-11; the audit now says so): main sessions only, each API response counted once. It is
 one person's usage: mostly Opus 5 (72% of usage) and Fable 5.1 (25%) in the Claude desktop app, with long sessions
 (median prompt 406k tokens per request) on a subscription, so the main conversation used the one-hour cache TTL.
 Shares are weighted at API list prices; a subscription is not billed these amounts.
@@ -42,7 +43,7 @@ Reading it:
   output (thinking and answers) is 13%. Requests whose prompt exceeded 300k tokens carried 83% of all usage.
 - **Two habits make most of the rebuilds, about equally:** switching models mid-session (8.1% of usage, almost
   all between Opus 5 and Fable 5.1) and coming back after more than an hour (7.3%).
-- **The guard's reach:** 29 questions in 30 days, about one a day, with 5.6% of usage behind them. What it
+- **The guard's reach:** 29 questions in 12 days, two or three a day, with 5.6% of usage behind them. What it
   saves is the part of that where the answer would have been "use a subagent" or "not now".
 - **A keep-alive pays for itself here, modestly:** +2.3% net at an 8-hour cap. That is why the plugin points to
   the existing keep-alive projects instead of adding another one.
@@ -119,7 +120,7 @@ better met with `/compact` before leaving.
 
 ## Limits of these numbers
 
-- One person's 30 days, on one machine, weighted at list prices.
+- One person's 12 days, on one machine, weighted at list prices.
 - The replays model what the guard and a keep-alive would have done; they cannot say how the user would have
   answered or when they would have come back.
 - `prompt_cache_warm` covers the current model's cache only: switching back to a model used within the TTL can
