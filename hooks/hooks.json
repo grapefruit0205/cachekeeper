@@ -1,0 +1,27 @@
+{
+  "description": "cachekeeper: before a /model or picker switch forfeits a warm prompt cache, ask with the size of the loss and the alternative that keeps the cache; log every switch for `cachekeeper events`.",
+  "hooks": {
+    "PreModelSwitch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run\" pre-model-switch",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostModelSwitch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run\" post-model-switch",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

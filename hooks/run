@@ -1,0 +1,12 @@
+#!/bin/sh
+# Run a cachekeeper hook with a Python 3.8+ this machine has. Without one, stay
+# silent and exit 0: a PreModelSwitch hook that fails or times out would block
+# the switch, and a missing interpreter is no reason to block anyone.
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+for candidate in python3 python "py -3"; do
+  if $candidate -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' >/dev/null 2>&1; then
+    PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}" exec $candidate -m cachekeeper.hook "$@"
+  fi
+done
+cat >/dev/null
+exit 0
