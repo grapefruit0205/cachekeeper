@@ -6,7 +6,7 @@
 
 - a **model-switch guard**: before `/model` or the model picker forfeits a warm cache, it asks — with the size of the loss and the alternative that keeps the cache;
 - a **keep-alive**, on by default: while you are away, one short request every 55 minutes keeps a long session's cache warm, for as long as your own history says that is cheaper than the rebuild;
-- **`cachekeeper audit`**: reads your own transcripts and attributes every cache rebuild to its cause, so you know which habit costs you the most.
+- **`cachekeeper audit`**: shows how much the keep-alive and the guard save, as a share of your usage on your own history, and attributes every cache rebuild to its cause, so you know which habit costs you the most.
 
 ## Install
 
@@ -68,11 +68,11 @@ Day to day there is nothing to run. Three things happen by themselves.
 }
 ```
 
-**When you want to know where your usage goes.** Type `/cachekeeper:audit` in a session, or ask Claude to run one of these (the plugin puts `cachekeeper` on the PATH of Claude Code's shell):
+**When you want to know what it saves and where your usage goes.** Type `/cachekeeper:audit` in a session, or ask Claude to run one of these (the plugin puts `cachekeeper` on the PATH of Claude Code's shell):
 
 | command | shows |
 |---|---|
-| `cachekeeper audit` | what your usage is made of, and the cause of every cache rebuild |
+| `cachekeeper audit` | how much the keep-alive and the guard save on your history, what your usage is made of, and the cause of every cache rebuild |
 | `cachekeeper keepalive` | which keep-alive policy pays off on your history, and the one in use |
 | `cachekeeper compaction` | what an earlier auto-compaction would have saved and cost |
 | `cachekeeper events` | the guard's asks and the keep-alive's pings |
@@ -202,6 +202,19 @@ new and not yet verified live.
 Every switch request and every switch that happens is logged to `events.jsonl` in the plugin's data directory — model ids, token counts, the estimate and the decision; no prompt text. `cachekeeper events` summarizes it.
 
 ## The audit
+
+The audit's job is to show the saving: how much of your usage cachekeeper saves, replayed on your own history. For the keep-alive that is the net saving, after what its pings cost; for the guard it is the usage riding on its questions, since what it saves depends on your answers. On the author's history (2026-09-11 to 09-24):
+
+```
+With the model-switch guard on
+  Of 41 manual switches, 30 had a warm cache and a rebuild of at least $1: the guard would have asked; 26 of them did rebuild — 7.9% of all usage rode on those answers.
+
+With a 55-minute keep-alive (one-hour TTL sessions, 8-hour cap)
+  1222 pings (with those after the last message of sessions never returned to) would cost 1.1% of usage and prevent 33 idle rebuilds (7.5%): net +6.4%.
+  Keep-alive pings actually sent: 27, 0.1% of usage
+```
+
+The saving of the policy in use, which `auto` picks, is in `cachekeeper keepalive` (on the author's history: sessions from 100k tokens for up to 24 hours, net +8.0%).
 
 ```
 cachekeeper audit            # the last 30 days (or as much history as there is), in your locale's language (ko/en)
