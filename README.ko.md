@@ -1,12 +1,3 @@
-**방법 2(단일 README 유지 + `<details>` 접기/펼치기)**를 적용하여 정리한 최종 `README.md`입니다.
-
-핵심 정보(기능, 설치, 기본 사용법, 기대 효과, 장점)는 첫 화면에서 바로 읽히고, 방대한 실측 데이터·비교표·Q&A·트러블슈팅은 필요할 때 펼쳐볼 수 있도록 정리했습니다. **(내용 누락 0%)**
-
-> [!TIP]
-> 깃허브 마크다운에서는 `<details>` 태그 바로 아래에 **반드시 빈 줄(엔터)**이 있어야 내부 마크다운 표와 코드 블록이 깨지지 않고 렌더링됩니다. 이 규칙을 엄격히 적용했습니다.
-
----
-
 <p align="center"><img src="assets/icon.png" width="160" alt="cachekeeper icon: a shield around a stack of cache layers with a refresh arrow"></p>
 
 # cachekeeper
