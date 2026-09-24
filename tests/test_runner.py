@@ -54,7 +54,8 @@ class RunnerTests(unittest.TestCase):
         env = {**self.base, "PYTHONIOENCODING": code_page, "CACHEKEEPER_LANG": "ko", "CLAUDE_CODE_ENTRYPOINT": "cli",
                "CLAUDE_PLUGIN_DATA": str(Path(self.directory.name) / code_page / data)}
         # Claude Code substitutes a native path for ${CLAUDE_PLUGIN_ROOT}: backslashes on Windows, then "/hooks/run".
-        result = subprocess.run([SH, f"{ROOT}/{script}", *args], input=stdin, env=env,
+        # It runs hooks in the session's folder, never the plugin's: the package must come from the launcher.
+        result = subprocess.run([SH, f"{ROOT}/{script}", *args], input=stdin, env=env, cwd=self.directory.name,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
         self.assertEqual(result.stderr.decode("utf-8", "replace"), "")
         return result.returncode, result.stdout.decode("utf-8")
@@ -124,7 +125,7 @@ class HookCommandTests(unittest.TestCase):
                "CACHEKEEPER_LANG": "ko", "CLAUDE_CODE_ENTRYPOINT": "cli", "PYTHONIOENCODING": "cp949", **env}
         started = time.monotonic()
         result = subprocess.run([*SHELL, command], input=json.dumps(event, ensure_ascii=False).encode("utf-8"),
-                                env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+                                env=env, cwd=self.directory, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
         self.assertLess(time.monotonic() - started, 60)
         return result.returncode, result.stdout.decode("utf-8"), result.stderr.decode("utf-8")
 

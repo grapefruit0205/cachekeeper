@@ -4,6 +4,8 @@ import datetime as dt
 import io
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -239,6 +241,13 @@ class WaitTests(unittest.TestCase):
         self.assertEqual(self.run_wait(clock), (0, ""))
         self.assertEqual(self.records[0]["reason"], "cap")
 
+    def test_stands_down_when_claude_code_is_gone(self):
+        clock = Clock(at(45))
+        with mock.patch.object(keepalive, "_alive", return_value=False) as alive:
+            self.assertEqual(self.run_wait(clock, {**ON, "CLAUDE_PID": "4242"}), (0, ""))
+        alive.assert_called_with(4242)
+        self.assertEqual(self.records[0]["reason"], "gone")
+
     def test_the_hook_entry_returns_the_exit_code(self):
         with mock.patch.object(keepalive, "wait", return_value=2) as wait, \
                 mock.patch.object(hook.sys, "stdin", io.StringIO(json.dumps(self.event))):
@@ -257,6 +266,23 @@ class WaitTests(unittest.TestCase):
         self.assertEqual(keepalive.read_state(path)["generation"], "g")
         hook.handle("post-model-switch", json.dumps({**post, "source": "sdk"}), env)
         self.assertIsNone(keepalive.read_state(path)["generation"])
+
+
+class AliveTests(unittest.TestCase):
+    """The wait's check that Claude Code (CLAUDE_PID) still runs. On Windows it must not use os.kill, which would
+    terminate the process it asks about."""
+
+    def test_a_process_is_alive_until_it_ends_and_asking_leaves_it_running(self):
+        self.assertTrue(keepalive._alive(os.getpid()))
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        try:
+            self.assertTrue(keepalive._alive(child.pid))
+            self.assertTrue(keepalive._alive(child.pid))
+            self.assertIsNone(child.poll())
+        finally:
+            child.kill()
+            child.wait()
+        self.assertFalse(keepalive._alive(child.pid))
 
 
 if __name__ == "__main__":

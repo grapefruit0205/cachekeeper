@@ -248,8 +248,8 @@ def write_state(path: Path, state: dict) -> None:
 
 
 def _alive(pid: int) -> bool:
-    if os.name != "posix":
-        return True                     # os.kill(pid, 0) terminates the process on Windows
+    if os.name == "nt":
+        return _alive_on_windows(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -257,6 +257,27 @@ def _alive(pid: int) -> bool:
     except OSError:
         return True
     return True
+
+
+def _alive_on_windows(pid: int) -> bool:
+    """os.kill(pid, 0) would terminate the process on Windows: ask for its exit code instead."""
+    import ctypes
+    from ctypes import wintypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    handle = kernel32.OpenProcess(0x1000, False, pid)      # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return ctypes.get_last_error() != 87                # ERROR_INVALID_PARAMETER: no such process
+    try:
+        code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return True
+        return code.value == 259                            # STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def message(view: View, pings: int, now: float, policy: Policy) -> str:

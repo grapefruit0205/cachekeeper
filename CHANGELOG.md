@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.8.1 — 2026-09-24
+
+- Windows: the keep-alive notices that Claude Code has closed. It skipped that check there, since `os.kill(pid, 0)`
+  terminates the process on Windows, so after the app closed a waiting hook ran on until its hour was up. It now asks
+  Windows for the process's exit code (`OpenProcess` and `GetExitCodeProcess`), which leaves the process running;
+  a new test asks about a live child process twice, checks that it still runs, and sees it gone once it ends.
+- The tests run the hooks and the CLI from an unrelated folder, as Claude Code does (it runs hooks in the session's
+  folder). Run from the repository, Python found the package in the current folder and would have hidden a launcher
+  that failed to put the plugin on `PYTHONPATH`, as it could on Windows where Git Bash gives `/c/...` paths.
+- The READMEs compare two more keep-alives (demouo/claude-code-cache-keepalive and
+  159753a52/claude-cache-keepalive, the second also an `asyncRewake` Stop hook) and no longer list what sets
+  cachekeeper apart.
+
 ## 0.8.0 — 2026-09-24
 
 - After a refused switch, the next message no longer goes to the subagent on its own: the main model first asks

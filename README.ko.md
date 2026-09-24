@@ -393,17 +393,12 @@ cachekeeper compaction
 | **[Pan1127/cc-cache-keepalive](https://github.com/Pan1127/cc-cache-keepalive)** | systemd 타이머 + 복제(Fork) 세션 핑 (Linux/tmux 전용) | 마지막 활동 50분 후 | - |
 | **[cnighswonger/claude-code-coffee](https://github.com/cnighswonger/claude-code-coffee)** | `/coffee 30`, `/coffee overnight` 등 `CronCreate` 수동 예약 | 지정한 휴식 시간 동안 | API 정가 |
 | **[yujiachen-y/claude-code-cache-keepalive](https://github.com/yujiachen-y/claude-code-cache-keepalive)** | `Stop` hook 4분 대기 후 턴 강제 연장 | 5분 캐시용: 최대 7회 (약 28분) | API 키 과금 (구독 시 사용 금지 안내) |
+| **[demouo/claude-code-cache-keepalive](https://github.com/demouo/claude-code-cache-keepalive)** | 플러그인 모니터(Monitor 도구)가 `Stop` Hook이 남긴 시각을 감시 (CLI 대화형 세션 전용) | 50분 미입력 시, 미입력 12시간까지 | API 정가 |
+| **[159753a52/claude-cache-keepalive](https://github.com/159753a52/claude-cache-keepalive)** | Node.js `asyncRewake` `Stop` hook (settings.json에 직접 추가) | 턴 종료 50분 후, 최대 3회, 5만 토큰 이상, claude.ai 구독만 | - |
 
 > [!IMPORTANT]
 > **복제(Fork) 세션 방식의 한계 (Delitefully 실측)**:  
 > 기존 세션에 `claude --resume <id> --fork-session -p`를 실행한 결과, 시스템 프롬프트에 세션 고유 식별자가 포함되어 **기존 캐시 읽기 0회, 54,300 신규 토큰 작성**이 발생했습니다. 즉, 복제 세션은 원본 세션의 캐시를 데우지 못합니다.
-
-### cachekeeper만의 차별점
-1. **Claude Code 공식 Hook 완벽 활용**: `asyncRewake` `Stop` hook을 사용하여 추가 백그라운드 프로세스, 얼리 액세스 플래그, Cron 작업, 복제 세션 없이 순수하게 동작합니다.
-2. **개인 기록 기반 맞춤 정책 (`auto`)**: 고정된 값이 아니라 내 실제 복귀 패턴을 분석하여 한도를 결정하며, 복귀하지 않은 세션에 낭비된 핑 비용까지 감안합니다.
-3. **구독 요금제 과금 잣대 적용**: 외부 실측에 기반하여 읽기 비용이 거의 무료인 구독제의 특성을 정확히 반영합니다.
-4. **완벽한 자동 철수**: 입력 감지, 턴 종료, 모델 전환, 압축, 절전 등 캐시 가치가 없어지면 즉시 중단합니다.
-5. **가드 및 감사와의 통합**: 모델 전환 낭비(12.5%)와 만료 낭비(11.8%)를 모두 커버합니다.
 
 *(cachekeeper가 하지 않는 것: 핑 메시지 숨기기, 상태 표시줄 카운트다운 위젯, OS 강제 절전 방지, 5분 캐시 살리기)*
 
@@ -448,8 +443,7 @@ cachekeeper compaction
 3. **구독 사용량 잣대의 변동성**: 구독제 과금 공식은 공식 공개 자료가 아닌 외부 실측치이므로 Anthropic의 정책 변경에 따라 변동될 수 있습니다.
 4. **대화창 내 핑 표시**: Keep-Alive 핑은 실제 대화상에 짧은 메시지로 기록되며 일반 턴과 동일하게 사용량에 반영됩니다.
 5. **PC 상태 의존성**: Keep-Alive는 PC가 깨어 있고 세션이 열려 있어야 동작합니다. 절전으로 1시간이 지나버린 경우에는 재구축 비용을 내는 대신 물러납니다.
-6. **Windows의 앱 종료 감지**: Windows에서는 Keep-Alive가 Claude Code의 실행 여부를 확인하는 단계를 건너뜁니다 (Windows에서는 `os.kill(pid, 0)`이 프로세스를 종료시킵니다). 그래서 앱을 닫은 뒤에도 대기 중인 Hook이 1시간이 다 될 때까지 남아 있다가, 아무것도 깨우지 못하고 끝날 수 있습니다.
-7. **Hook 범위의 한계**: 가드는 `PreModelSwitch` Hook으로 유입되는 전환만 감지합니다. 모델의 Effort 변경 또한 대부분의 모델에서 캐시를 무효화하지만(Opus 5.5 및 Fable 5.1 제외), 이는 Claude Code 자체 확인 창이 처리합니다.
+6. **Hook 범위의 한계**: 가드는 `PreModelSwitch` Hook으로 유입되는 전환만 감지합니다. 모델의 Effort 변경 또한 대부분의 모델에서 캐시를 무효화하지만(Opus 5.5 및 Fable 5.1 제외), 이는 Claude Code 자체 확인 창이 처리합니다.
 
 ---
 
