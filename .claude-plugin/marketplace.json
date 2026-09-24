@@ -9,7 +9,7 @@
     {
       "name": "cachekeeper",
       "displayName": "cachekeeper",
-      "description": "Ask before a model switch forfeits a warm prompt cache; audit where cache rebuilds come from.",
+      "description": "Ask before a model switch forfeits a warm prompt cache, keep long sessions warm while you are away, and audit where cache rebuilds come from.",
       "category": "productivity",
       "source": "./"
     }

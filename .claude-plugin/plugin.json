@@ -2,7 +2,7 @@
   "name": "cachekeeper",
   "displayName": "cachekeeper",
   "version": "0.6.0",
-  "description": "Stop throwing away a warm prompt cache by accident: ask before a model switch forfeits it (with the cost Claude Code computes), and audit which causes your cache rebuilds come from.",
+  "description": "Stop rewriting Claude Code's prompt cache by accident: a model-switch guard, a keep-alive tuned to your own breaks, and an audit of what each cache rebuild cost, on subscription usage or API prices.",
   "author": {
     "name": "Junseok Pak",
     "url": "https://github.com/grapefruit0205"
@@ -10,5 +10,5 @@
   "homepage": "https://github.com/grapefruit0205/cachekeeper",
   "repository": "https://github.com/grapefruit0205/cachekeeper",
   "license": "MIT",
-  "keywords": ["prompt-cache", "cost", "usage", "model-switch", "hooks"]
+  "keywords": ["prompt-cache", "cost", "usage", "model-switch", "keep-alive", "hooks"]
 }

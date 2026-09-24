@@ -1,12 +1,12 @@
 # cachekeeper
 
+[English](README.md) · **한국어**
+
 **살아 있는 프롬프트 캐시를 실수로 버리지 않게 해 주는 Claude Code 플러그인입니다.** 세 가지로 이루어져 있습니다.
 
 - **모델 전환 가드**: `/model`이나 모델 선택기로 캐시가 살아 있는 세션의 모델을 바꾸려 하면, 잃게 될 양과 캐시를 지키는 대안을 보여 주고 먼저 묻습니다.
 - **`cachekeeper audit`**: 내 대화 기록을 읽어 캐시 재구축을 원인별로 나눠, 어떤 습관이 가장 비싼지 보여 줍니다. `cachekeeper keepalive`는 내 경우 keep-alive를 몇 시간까지 켜 두는 게 이득이었을지, `cachekeeper compaction`은 더 일찍 압축했다면 얼마를 아꼈을지 찾아 줍니다.
 - 직접 켜는 **keep-alive**: 자리를 비운 동안 55분마다 짧은 요청 하나로 긴 세션의 캐시를 살려 둡니다. 다시 쓰는 것보다 쌀 때까지만입니다.
-
-[English](README.md)
 
 ## 사용법
 
@@ -179,15 +179,32 @@ API 정가로는 절감의 대부분이 줄어든 다시 읽기입니다. 구독
 
 데스크톱 앱에서 실측했습니다([자세히](docs/measurement-2026-09-23.md#keep-alive-live)). 마지막 메시지 55분 뒤와 110분 뒤의 핑이 모두 캐시를 읽었고(5.7만 토큰 Opus 5.5 세션에서 API 정가로 한 번에 $0.014), 112분 뒤에 보낸 메시지는 다시 쓰면 $0.46이었을 것을 $0.015로 처리했습니다.
 
-`cachekeeper events`가 핑 기록과 각 대기가 물러난 이유를 보여 줍니다. 다른 방식으로 세션을 살려 두는 프로젝트도 있습니다.
+`cachekeeper events`가 핑 기록과 각 대기가 물러난 이유를 보여 줍니다.
 
-| 프로젝트 | 방식 |
-|---|---|
-| [Delitefully/claude-keepwarm](https://github.com/Delitefully/claude-keepwarm) | 45분 동안 입력이 없으면 "마침표 하나"를 요청하는 한 줄을 보내고, 남은 줄을 숨김 |
-| [FiredMosquito831/claude-cache-warm](https://github.com/FiredMosquito831/claude-cache-warm) | 상태 표시줄, 대시보드, 세션별 설정이 있는 플러그인 |
-| [santiquiroz/claude-prompt-cache-keepalive](https://github.com/santiquiroz/claude-prompt-cache-keepalive) | 백그라운드 타이머들이 세션을 깨움. 반복 `CronCreate` 작업은 쉬는 세션에서 한 번도 실행되지 않았고, `ScheduleWakeup`은 `/loop` 안에서만 동작했다는 실측 포함 |
-| [Pan1127/cc-cache-keepalive](https://github.com/Pan1127/cc-cache-keepalive) | 저장되지 않는 복제 세션에서 핑을 보내 원래 세션에 메시지가 쌓이지 않음 |
-| [cnighswonger/claude-code-coffee](https://github.com/cnighswonger/claude-code-coffee) | 쉬기 전에 `/coffee 30` |
+### 다른 keep-alive와 비교
+
+캐시를 살려 두는 프로젝트는 여럿 있습니다. 2026-09-24에 각 README에 적힌 내용입니다.
+
+| 프로젝트 | 핑하는 방법 | 언제 | 계산 기준 |
+|---|---|---|---|
+| [Delitefully/claude-keepwarm](https://github.com/Delitefully/claude-keepwarm) | function hooks 모듈(얼리 액세스 기능인 `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` 필요) 또는 백그라운드 모니터. 두 번째 플러그인이 핑 줄을 화면에서 지움 | 45분 동안 입력이 없으면, 최대 8번(약 8시간), 2만 토큰부터. 캐시가 이미 식었으면 건너뜀 | API 정가 |
+| [FiredMosquito831/claude-cache-warm](https://github.com/FiredMosquito831/claude-cache-warm) | 플러그인 모니터(대화형 CLI 세션에서만 동작). 데스크톱 앱처럼 그 밖의 환경에서는 Claude에게 `CronCreate` 작업을 만들게 하고, 이 작업은 작업 중에도 정해진 주기로 실행됨. 상태 표시줄, 대시보드, 트레이 앱 | 기본은 서브에이전트나 백그라운드 명령이 도는 동안만. 50분마다, 자리를 비운 지 3시간까지, 2만 토큰부터 | API 정가 |
+| [santiquiroz/claude-prompt-cache-keepalive](https://github.com/santiquiroz/claude-prompt-cache-keepalive) | 스킬이 OS 절전 잠금을 잡은 백그라운드 타이머 사다리를 세우고, "afk"나 "I'm going to sleep"이라고 쓰면 hook이 대신 세움. 반복 `CronCreate` 작업은 쉬는 세션에서 한 번도 실행되지 않았고 `ScheduleWakeup`은 `/loop` 안에서만 동작했다는 실측 포함 | 사다리를 세운 만큼 | API 정가 |
+| [Pan1127/cc-cache-keepalive](https://github.com/Pan1127/cc-cache-keepalive) | systemd 타이머가 가장 최근 세션을 저장되지 않는 복제 세션으로 핑. Linux, tmux, 직접 관리하는 `sessions.json` 필요 | 마지막 활동 50분 뒤 | — |
+| [cnighswonger/claude-code-coffee](https://github.com/cnighswonger/claude-code-coffee) | 쉬기 전에 `/coffee 30`이나 `/coffee overnight`로 `CronCreate` 핑을 예약 | 말한 휴식 동안 | API 정가 |
+| [yujiachen-y/claude-code-cache-keepalive](https://github.com/yujiachen-y/claude-code-cache-keepalive) | `Stop` hook이 4분 기다린 뒤 멈춤을 막아 한 턴을 더 돌림 | 5분 캐시용: 최대 7번(약 28분) | API 키 과금. 구독이면 끄라고 적혀 있음 |
+
+[xinnyu/claude-cache-warm](https://github.com/xinnyu/claude-cache-warm)(`/loop`로 270초마다)과 [meetvaghani12/claude-cache-warmer](https://github.com/meetvaghani12/claude-cache-warmer)도 5분 캐시를 살립니다. 복제 세션에 대해서는 Delitefully의 실측이 있습니다. 살아 있는 세션에 `claude --resume <id> --fork-session -p`를 돌리자 캐시에서 읽은 것은 0이고 54,300토큰을 새로 썼습니다. 시스템 프롬프트에 세션마다 다른 텍스트가 들어 있어서, 복제 세션은 원래 세션이 아니라 자기 캐시를 데웁니다.
+
+cachekeeper가 다른 점:
+
+- **Claude Code 자체 hook.** 핑은 `asyncRewake` `Stop` hook에서 나옵니다. 백그라운드 프로세스, 얼리 액세스 플래그, 예약 작업, 복제 세션이 없습니다. 살아 있는 세션을 그대로 거쳐 그 세션의 캐시를 읽고, 위에 적은 대로 데스크톱 앱에서 실측했습니다.
+- **내 기록에서 정하는 정책.** 다른 프로젝트는 고정 기본값이나 사용자가 정한 길이를 씁니다(claude-cache-warm은 대시보드에서 내 기록으로 절약했을 양을 보여 주고, 한도는 사용자가 정합니다). `auto`는 내 휴식을 재현해 최소 크기와 한도를 고르고 매일 다시 고르며, 끝내 돌아오지 않은 세션에 나간 핑도 비용으로 셉니다.
+- **구독 사용량 기준.** 위 README 중 핑에 값을 매긴 곳은 모두 API 정가를 씁니다. 정가로는 핑이 대화 전체를 입력 단가의 10분의 1로 읽어서, 1시간 캐시에서 핑 약 20번이 재구축 한 번 값입니다. 외부에서 측정한 구독 사용량([두 가지 잣대](#두-가지-잣대))으로는 읽기가 거의 0이라 핑 한 번이 재구축의 약 1%이고, 그래서 한도를 길게 잡아도 위험이 작습니다. 만든 사람의 기록에서 가장 좋은 한도는 구독 사용량 기준 24시간, API 정가 기준 2시간이었습니다.
+- **알아서 물러납니다.** 사용자가 입력하거나, 다른 턴이 끝나거나, 모델 전환이나 `/compact` 뒤, 캐시가 이미 식었을 때, `claude -p` 실행에서는 핑하지 않습니다. 핑을 사용자가 돌아온 것으로 세지도 않습니다.
+- **가드, audit과 함께.** 만든 사람의 기록에서는 모델 전환에 든 비용이 쉬었다 와서 캐시가 만료된 비용과 비슷했습니다(사용량의 12.5%와 11.8%). keep-alive는 뒤쪽만 줄일 수 있습니다. 앞쪽은 가드가 맡고, 둘 중 어느 쪽이 더 비싼지는 audit이 알려 줍니다.
+
+하지 않는 것: 핑 줄 숨기기(keepwarm-quiet가 함), 상태 표시줄이나 대시보드의 카운트다운(claude-cache-warm이 함), 컴퓨터를 깨어 있게 붙잡기(santiquiroz의 타이머가 함), 5분 캐시 살리기(마지막 세 프로젝트가 함).
 
 Claude Code 자체 기능도 있습니다. 상태 표시줄에 캐시 만료 시각이 전달되고, `/usage`가 적중률과 마지막 캐시 미스의 원인을 보여 주며, 오래 쉰 큰 세션을 재개하면 요약에서 이어 가기를 제안합니다.
 

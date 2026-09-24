@@ -1,12 +1,12 @@
 # cachekeeper
 
+**English** · [한국어](README.ko.md)
+
 **Stop throwing away a warm prompt cache by accident.** A Claude Code plugin with three parts:
 
 - a **model-switch guard**: before `/model` or the model picker forfeits a warm cache, it asks — with the size of the loss and the alternative that keeps the cache;
 - **`cachekeeper audit`**: reads your own transcripts and attributes every cache rebuild to its cause, so you know which habit costs you the most — `cachekeeper keepalive` finds how long a keep-alive would have paid off for you, and `cachekeeper compaction` what compacting earlier would have saved;
 - an opt-in **keep-alive**: while you are away, one short request every 55 minutes keeps a long session's cache warm, for as long as that is cheaper than the rebuild.
-
-[한국어](README.ko.md)
 
 ## How to use
 
@@ -189,15 +189,32 @@ With `auto`, the Stop hook redoes the `cachekeeper keepalive` replay once a day,
 
 Measured live in the desktop app ([details](docs/measurement-2026-09-23.md#keep-alive-live)): pings 55 and 110 minutes after the last message each read the cache ($0.014 apiece at list price for a 57k-token Opus 5.5 session), and a message 112 minutes after the last one cost $0.015 instead of the $0.46 of writing it again.
 
-`cachekeeper events` lists the pings and why each wait stood down. Other projects keep sessions warm with other mechanisms:
+`cachekeeper events` lists the pings and why each wait stood down.
 
-| project | mechanism |
-|---|---|
-| [Delitefully/claude-keepwarm](https://github.com/Delitefully/claude-keepwarm) | after 45 idle minutes submits one line asking for a single period, and hides the rows it leaves |
-| [FiredMosquito831/claude-cache-warm](https://github.com/FiredMosquito831/claude-cache-warm) | plugin with status line, dashboard and per-session settings |
-| [santiquiroz/claude-prompt-cache-keepalive](https://github.com/santiquiroz/claude-prompt-cache-keepalive) | a ladder of background timers that wake the session; documents that a recurring `CronCreate` job never fired in an idle session and `ScheduleWakeup` only works inside `/loop` |
-| [Pan1127/cc-cache-keepalive](https://github.com/Pan1127/cc-cache-keepalive) | pings from a non-persistent fork so the original session gets no extra messages |
-| [cnighswonger/claude-code-coffee](https://github.com/cnighswonger/claude-code-coffee) | `/coffee 30` before a break |
+### Compared with other keep-alives
+
+Other projects keep the cache warm too. As their READMEs describe them on 2026-09-24:
+
+| project | how it pings | when | priced at |
+|---|---|---|---|
+| [Delitefully/claude-keepwarm](https://github.com/Delitefully/claude-keepwarm) | a function-hooks module (needs `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`, an early-access feature) or a background monitor; a second plugin blanks the ping rows | after 45 idle minutes, up to 8 times (about 8 hours), from 20k tokens; skips a ping once the cache is cold | list prices |
+| [FiredMosquito831/claude-cache-warm](https://github.com/FiredMosquito831/claude-cache-warm) | a plugin monitor, which runs only in interactive CLI sessions; elsewhere, as in the desktop app, it has Claude schedule a `CronCreate` task, which fires on a fixed schedule even while you work. Status line, dashboard, tray app | by default only while a subagent or background command runs; every 50 minutes, for up to 3 hours away, from 20k tokens | list prices |
+| [santiquiroz/claude-prompt-cache-keepalive](https://github.com/santiquiroz/claude-prompt-cache-keepalive) | a skill arms a ladder of background timers that hold an OS sleep lock, and a hook arms it when you write "afk" or "I'm going to sleep". Reports that a recurring `CronCreate` job never fired in an idle session and `ScheduleWakeup` works only inside `/loop` | as long as you size the ladder | list prices |
+| [Pan1127/cc-cache-keepalive](https://github.com/Pan1127/cc-cache-keepalive) | a systemd timer pings the most recent session from a fork that is not saved; needs Linux, tmux and a `sessions.json` kept by your own session manager | 50 minutes after the last activity | — |
+| [cnighswonger/claude-code-coffee](https://github.com/cnighswonger/claude-code-coffee) | `/coffee 30` or `/coffee overnight` before a break schedules `CronCreate` pings | the break you name | list prices |
+| [yujiachen-y/claude-code-cache-keepalive](https://github.com/yujiachen-y/claude-code-cache-keepalive) | a `Stop` hook sleeps 4 minutes, then blocks the stop to run one more turn | the five-minute cache: up to 7 times (about 28 minutes) | API key billing; says to turn it off on a subscription |
+
+[xinnyu/claude-cache-warm](https://github.com/xinnyu/claude-cache-warm) (a `/loop` every 270 seconds) and [meetvaghani12/claude-cache-warmer](https://github.com/meetvaghani12/claude-cache-warmer) also keep the five-minute cache. On forks, Delitefully measured that `claude --resume <id> --fork-session -p` against a live session read nothing and wrote 54,300 tokens: the system prompt carries text unique to each session, so a fork warms its own cache, not the session's.
+
+What cachekeeper does differently:
+
+- **Claude Code's own hook.** The ping comes from an `asyncRewake` `Stop` hook: no background process, no early-access flag, no scheduled task, no fork. It goes through the live session and reads that session's cache, as measured in the desktop app above.
+- **A policy from your history.** The others use fixed defaults or a length you choose (claude-cache-warm's dashboard shows what warming would have saved on your transcripts, for you to set its cap by). `auto` replays your own breaks, picks the minimum size and the cap, and picks them again every day, counting the pings that go to sessions you never come back to.
+- **Subscription usage.** Every README above that prices a ping uses list prices, where a ping reads the whole conversation at a tenth of the input price and about 20 pings on the one-hour cache cost as much as one rebuild. On subscription usage as measured from outside ([two yardsticks](#two-yardsticks)), reads count next to nothing and a ping costs about 1% of a rebuild, so a long cap risks little: on the author's history the best cap was 24 hours on subscription usage and 2 hours at list prices.
+- **It stands down by itself**: when you write, when another turn ends, on a model switch or `/compact`, once the cache has gone cold, and in `claude -p` runs. A ping never counts as you coming back.
+- **Next to the guard and the audit.** On the author's history model switches cost about as much as idle expiry (12.5% and 11.8% of usage). A keep-alive only reaches the second; the guard covers the first, and the audit tells you which one costs you more.
+
+What it does not do: hide the ping rows (keepwarm-quiet does), show a countdown in a status line or dashboard (claude-cache-warm does), keep the computer awake (santiquiroz's timers do), or keep the five-minute cache warm (the last three do).
 
 Claude Code itself also helps: the status line receives the cache's expiry time, `/usage` shows the hit ratio and the likely cause of the last miss, and resuming a large session after a long break offers to resume from a summary.
 
