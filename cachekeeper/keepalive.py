@@ -8,14 +8,15 @@ short request before the hour is up reads the cache instead, for about a
 twentieth of that, and starts the hour again.
 
 The keep-alive is a Stop hook with ``asyncRewake``: when a turn ends, Claude
-Code runs ``wait`` in the background, and if it exits with code 2, wakes the
-model with what it printed. ``wait``
+Code runs ``wait`` in the background, and if the hook exits with code 2, wakes
+the model with what it printed. ``wait``
 
 * returns 0 at once unless the conversation is at least ``min_context`` tokens,
   its cache lives an hour, and fewer than ``max_pings`` pings have followed the
   user's last message;
 * otherwise sleeps until ``interval`` (55 minutes) after the last request
-  started and returns 2: the model answers one word, which reads the cache and
+  started and returns ``WAKE``, which the hook command turns into exit code 2:
+  the model answers one word, which reads the cache and
   restarts the hour, and the Stop hook of that short turn starts the next wait;
 * returns 0 as soon as something else happens first: the user writes, another
   turn ends, the model is switched, the session is gone, or the machine slept
@@ -46,6 +47,9 @@ QUIET = ("small", "5-minute cache", "no request")    # immediate stand-downs at 
 LATE_SECONDS = 60           # closer than this to the hour's end, a ping may land after the cache is gone
 KEEP_PINGS_SECONDS = 86_400
 REPLY = "(keep-alive)"
+# The exit code for a ping. The hook command turns it, and nothing else, into exit code 2, the one code that wakes
+# the model: a missing file, a missing or failing Python, or a shell's own error can never wake it in a loop.
+WAKE = 75
 # Who counts as the user coming back: someone typing, another session's message, a channel message.
 # Background-task notifications (the pings among them), automatic continuations and plugin messages do not.
 ARRIVALS = ("human", "peer", "channel", "person")
@@ -291,7 +295,7 @@ def message(view: View, pings: int, now: float, policy: Policy) -> str:
 def wait(event: dict, env: dict[str, str], directory: Path, *, now: Callable[[], float] = time.time,
          sleep: Callable[[float], None] = time.sleep, err=None,
          log: Callable[[dict], None] | None = None) -> int:
-    """The Stop hook's background wait. Returns 2 to wake the model for one ping, else 0.
+    """The Stop hook's background wait. Returns ``WAKE`` to wake the model for one ping, else 0.
 
     ``log`` receives one record per wait that ran: how it ended, and why (not the immediate
     stand-downs of small or five-minute-cache sessions, which happen at most turn ends).
@@ -309,7 +313,7 @@ def wait(event: dict, env: dict[str, str], directory: Path, *, now: Callable[[],
     code, reason, view = _wait(transcript, session, directory, policy, env, now, sleep, err)
     if log is not None and reason not in QUIET:
         log({"at": round(now(), 3), "event": "keepalive", "session_id": session,
-             "decision": "ping" if code == 2 else "stop", "reason": reason,
+             "decision": "ping" if code == WAKE else "stop", "reason": reason,
              "context_tokens": view.context, "idle_seconds": round(now() - view.anchor) if view.anchor else None,
              "policy": {"interval": policy.interval, "max_pings": policy.max_pings, "min_context": policy.min_context}})
     return code
@@ -351,7 +355,7 @@ def _wait(transcript: Path, session: str, directory: Path, policy: Policy, env: 
             state["generation"] = None
             write_state(path, state)
             err.write(message(view, count, current, policy) + "\n")
-            return 2, f"{count}/{policy.max_pings}", view
+            return WAKE, f"{count}/{policy.max_pings}", view
         sleep(min(POLL_SECONDS, max(1.0, seconds)))
 
 

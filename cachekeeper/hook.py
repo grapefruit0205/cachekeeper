@@ -5,7 +5,8 @@ Reads the event from stdin, answers on stdout, and appends one line per event to
 contents: model ids, token counts and the decision). A PreModelSwitch hook that
 fails or times out blocks the switch, so every error path here stays silent and
 lets the switch through. ``stop`` is the keep-alive's background wait: its exit
-code (2 wakes the model) is the answer.
+code is the answer, ``keepalive.WAKE`` (the hook command makes it the 2 that
+wakes the model) or 0.
 """
 
 from __future__ import annotations

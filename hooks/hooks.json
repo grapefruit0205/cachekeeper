@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f \"${CLAUDE_PLUGIN_ROOT}/hooks/run\" ]; then sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run\" pre-model-switch; fi",
+            "command": "echo `# <#` >/dev/null; f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run\"; [ -f \"$f\" ] || exit 0; sh \"$f\" pre-model-switch; exit 0\n#> > $null; $f = \"$env:CLAUDE_PLUGIN_ROOT/hooks/run.ps1\"; if (-not [IO.File]::Exists($f)) { exit 0 }; & $f pre-model-switch; exit 0",
             "timeout": 10
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f \"${CLAUDE_PLUGIN_ROOT}/hooks/run\" ]; then sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run\" post-model-switch; fi",
+            "command": "echo `# <#` >/dev/null; f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run\"; [ -f \"$f\" ] || exit 0; sh \"$f\" post-model-switch; exit 0\n#> > $null; $f = \"$env:CLAUDE_PLUGIN_ROOT/hooks/run.ps1\"; if (-not [IO.File]::Exists($f)) { exit 0 }; & $f post-model-switch; exit 0",
             "timeout": 10
           }
         ]
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f \"${CLAUDE_PLUGIN_ROOT}/hooks/run\" ]; then sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run\" user-prompt-submit; fi",
+            "command": "echo `# <#` >/dev/null; f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run\"; [ -f \"$f\" ] || exit 0; sh \"$f\" user-prompt-submit; exit 0\n#> > $null; $f = \"$env:CLAUDE_PLUGIN_ROOT/hooks/run.ps1\"; if (-not [IO.File]::Exists($f)) { exit 0 }; & $f user-prompt-submit; exit 0",
             "timeout": 10
           }
         ]
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f \"${CLAUDE_PLUGIN_ROOT}/hooks/run\" ]; then sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run\" stop; fi",
+            "command": "echo `# <#` >/dev/null; f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run\"; [ -f \"$f\" ] || exit 0; sh \"$f\" stop; [ $? -eq 75 ] && exit 2; exit 0\n#> > $null; $f = \"$env:CLAUDE_PLUGIN_ROOT/hooks/run.ps1\"; if (-not [IO.File]::Exists($f)) { exit 0 }; & $f stop; if ($LASTEXITCODE -eq 75) { exit 2 }; exit 0",
             "asyncRewake": true,
             "rewakeMessage": "cachekeeper:",
             "rewakeSummary": "cachekeeper keep-alive ping",

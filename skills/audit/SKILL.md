@@ -3,7 +3,7 @@ name: audit
 description: Report where this machine's Claude Code prompt-cache spend goes — model switches, idle expiry, effort changes, compaction, session starts — from the local transcripts, and what the model-switch guard and a keep-alive would have reached. Use when the user asks why usage is high, what cache rebuilds cost, or runs /cachekeeper:audit.
 ---
 
-Run `cachekeeper audit` with the Bash tool (it is on the PATH while this plugin is enabled). Pass `--days N` when the user names a period, `--lang ko` or `--lang en` to match the user's language, and `--basis subscription` or `--basis api` only when the user asks for the other yardstick. It reads only `~/.claude/projects/*/*.jsonl` on this machine and prints aggregate shares; nothing leaves the machine.
+Run `cachekeeper audit` with the Bash tool (it is on the PATH while this plugin is enabled). Where there is no Bash tool, only PowerShell (Windows without Git Bash), run `& "${CLAUDE_PLUGIN_ROOT}/bin/cachekeeper.ps1" audit` instead, and the other `cachekeeper` commands below the same way. Pass `--days N` when the user names a period, `--lang ko` or `--lang en` to match the user's language, and `--basis subscription` or `--basis api` only when the user asks for the other yardstick. It reads only `~/.claude/projects/*/*.jsonl` on this machine and prints aggregate shares; nothing leaves the machine.
 
 Then answer in the user's language:
 

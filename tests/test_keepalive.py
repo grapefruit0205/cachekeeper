@@ -200,7 +200,7 @@ class WaitTests(unittest.TestCase):
     def test_pings_once_55_minutes_after_the_last_request(self):
         clock = Clock(at(45))
         code, text = self.run_wait(clock)
-        self.assertEqual(code, 2)
+        self.assertEqual(code, keepalive.WAKE)
         self.assertAlmostEqual(clock.value, at(7.1) + 3300, delta=0.01)
         self.assertLessEqual(max(clock.slept), keepalive.POLL_SECONDS)
         self.assertIn(f"{MARK} 1 of 3", text)
@@ -249,9 +249,9 @@ class WaitTests(unittest.TestCase):
         self.assertEqual(self.records[0]["reason"], "gone")
 
     def test_the_hook_entry_returns_the_exit_code(self):
-        with mock.patch.object(keepalive, "wait", return_value=2) as wait, \
+        with mock.patch.object(keepalive, "wait", return_value=keepalive.WAKE) as wait, \
                 mock.patch.object(hook.sys, "stdin", io.StringIO(json.dumps(self.event))):
-            self.assertEqual(hook.main(["stop"]), 2)
+            self.assertEqual(hook.main(["stop"]), keepalive.WAKE)
         self.assertEqual(wait.call_args.args[0], self.event)
         with mock.patch.object(hook.sys, "stdin", io.StringIO("not json")), \
                 mock.patch.object(hook.sys, "stderr", io.StringIO()):
