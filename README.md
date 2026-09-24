@@ -10,7 +10,7 @@
 
 ## Install
 
-You need Claude Code (2.1.280 has every hook cachekeeper uses) and Python 3.8 or newer. In a terminal:
+You need Claude Code (2.1.280 has every hook cachekeeper uses) and Python 3.8 or newer; on Windows, Git for Windows as well ([On Windows](#on-windows)). In a terminal:
 
 ```
 claude plugin marketplace add grapefruit0205/cachekeeper
@@ -23,6 +23,27 @@ That is all: there is nothing to set. The desktop app loads the plugin into open
 
 - Update: `claude plugin marketplace update cachekeeper`, then `claude plugin update cachekeeper@cachekeeper`.
 - Remove: `claude plugin uninstall cachekeeper@cachekeeper`.
+
+### On Windows
+
+On Windows, Claude Code runs a plugin's hooks with Git Bash, and with PowerShell when there is no Git Bash; cachekeeper's hooks do not run in PowerShell. This holds for the Claude desktop app and for Claude Code in a terminal, and neither installs Git for you any more, so set up two things, before or after installing the plugin:
+
+1. **Install Git for Windows** from [git-scm.com](https://git-scm.com/downloads/win), or with `winget install --id Git.Git -e`. Claude Code finds Git Bash in `C:\Program Files\Git` or next to the `git` on your PATH. If you installed it somewhere else and Claude Code does not find it, name it in `~/.claude/settings.json`:
+   ```json
+   {
+     "env": {
+       "CLAUDE_CODE_GIT_BASH_PATH": "C:\\Program Files\\Git\\bin\\bash.exe"
+     }
+   }
+   ```
+2. **Install Python 3.8 or newer** from [python.org](https://www.python.org/downloads/windows/). In Git Bash, one of `python3 --version`, `python --version` or `py -3 --version` should print 3.8 or newer. The `python` that comes with Windows only points you to the Microsoft Store; it is not Python.
+3. **Quit the desktop app or the terminal completely and open it again** (the desktop app from its tray icon too). A Claude Code that is already running keeps the environment it started with.
+4. **Check**: in a new session, run `/cachekeeper:audit`. A report means Claude Code found both Git Bash and Python, and the hooks run with the same two. If it says `Python 3.8 or newer is required`, go back to step 2; if the command cannot run at all, to step 1. Without Python the hooks stay off without an error, so this is the way to tell.
+
+- **WSL**: Claude Code in WSL, including the desktop app's WSL environment, runs as on Linux. It needs no Git for Windows: install cachekeeper in the Claude Code inside WSL. WSL's Ubuntu comes with Python.
+- The author uses cachekeeper on Ubuntu. On Windows it is tested in CI (GitHub's Windows runners, through Git Bash), not yet on a Windows machine running Claude Code.
+
+The Windows desktop app installed as an MSIX package has a bug: outside programs such as Git Bash and Python cannot see plugin files the app unpacks into its own folder (`%APPDATA%\Claude`) ([anthropics/claude-code#96087](https://github.com/anthropics/claude-code/issues/96087)). A plugin installed from a marketplace usually goes to `C:\Users\<you>\.claude\plugins` instead, so this should not touch cachekeeper, but that is not verified. If it does, from 0.8.0 on the hooks find no files and end quietly: no loop, only no guard and no keep-alive.
 
 ## How to use
 
@@ -84,7 +105,7 @@ The three overlap, so they do not add up: a break the keep-alive bridges leaves 
 
 **I use an API key.** Unless you set `promptCacheTtl` to `1h`, your sessions use the five-minute cache: the keep-alive stays off, and the guard and the audit count at list prices. With `1h`, set `CACHEKEEPER_BASIS=api` so that they count at list prices too.
 
-**Does it work on Windows and macOS?** CI runs the tests on both, including the hooks started through `sh` the way Claude Code starts them; the author uses it on Ubuntu. On Windows it needs Git Bash (Git for Windows), which Claude Code runs plugin hooks with; without it the hooks cannot start ([details](#requirements-and-settings)).
+**Does it work on Windows and macOS?** Yes. macOS needs only Python 3.8 or newer; on Windows, install Git for Windows and Python and restart the app ([On Windows](#on-windows)). CI runs the tests on all three systems; the author uses it on Ubuntu.
 
 **Does it send anything anywhere?** No. It reads this machine's transcripts. Its log (`events.jsonl` in the plugin's data folder) holds model ids, token counts and decisions, no prompt text.
 
@@ -275,7 +296,7 @@ Claude Code itself also helps: the status line receives the cache's expiry time,
 
 Needs Python 3.8+ (the hook stays silent and lets every switch through without one) and a Claude Code with `PreModelSwitch` hooks (and `asyncRewake` hooks for the keep-alive; 2.1.280 has both). To try a checkout: `claude --plugin-dir /path/to/cachekeeper`.
 
-It runs on Linux, macOS and Windows, and CI runs the tests on all three ([Tests](#tests)). On Windows, Claude Code runs a plugin's hook commands with Git Bash (from Git for Windows). Without Git Bash it runs them in PowerShell, where cachekeeper's hooks, which start with `sh`, cannot run: Claude Code shows a hook error and lets every switch through, and there is no keep-alive.
+It runs on Linux, macOS and Windows, and CI runs the tests on all three ([Tests](#tests)). On Windows it also needs Git for Windows, since Claude Code runs plugin hooks with its Git Bash: see [On Windows](#on-windows).
 
 | variable | default | effect |
 |---|---|---|

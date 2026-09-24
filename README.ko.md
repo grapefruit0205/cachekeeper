@@ -12,6 +12,7 @@
 
 ## 목차
 - [설치](#설치)
+  - [Windows에서 사용하려면](#windows에서-사용하려면)
 - [사용법](#사용법)
 - [기대 효과](#기대-효과)
 - [Q&A](#qa)
@@ -30,7 +31,7 @@
 ## 설치
 
 > [!NOTE]
-> Claude Code(v2.1.280 이상에 cachekeeper가 사용하는 모든 Hook이 포함되어 있습니다)와 Python 3.8 이상이 필요합니다.
+> Claude Code(v2.1.280 이상에 cachekeeper가 사용하는 모든 Hook이 포함되어 있습니다)와 Python 3.8 이상이 필요합니다. Windows에서는 Git for Windows도 필요합니다([Windows에서 사용하려면](#windows에서-사용하려면)).
 
 ### 터미널에서 설치
 ```bash
@@ -51,6 +52,28 @@ claude plugin install cachekeeper@cachekeeper
 ### 업데이트 및 삭제
 - **업데이트**: `claude plugin marketplace update cachekeeper` 실행 후 `claude plugin update cachekeeper@cachekeeper`
 - **삭제**: `claude plugin uninstall cachekeeper@cachekeeper`
+
+### Windows에서 사용하려면
+
+Claude Code는 Windows에서 플러그인 Hook을 **Git Bash**로 실행하고, Git Bash가 없으면 PowerShell로 실행합니다. cachekeeper의 Hook은 PowerShell에서는 실행되지 않습니다. Claude 데스크톱 앱과 터미널의 Claude Code 모두 같고, 둘 다 이제는 Git 없이도 설치되므로 아래 두 가지를 직접 준비해야 합니다. 플러그인 설치 전후 어느 때 해도 됩니다.
+
+1. **Git for Windows 설치**: [git-scm.com](https://git-scm.com/downloads/win)에서 받거나 `winget install --id Git.Git -e`로 설치합니다. Claude Code는 `C:\Program Files\Git`이나 PATH에 있는 `git` 옆에서 Git Bash를 자동으로 찾습니다. 다른 곳에 설치해서 찾지 못하면 `~/.claude/settings.json`에 경로를 적습니다.
+   ```json
+   {
+     "env": {
+       "CLAUDE_CODE_GIT_BASH_PATH": "C:\\Program Files\\Git\\bin\\bash.exe"
+     }
+   }
+   ```
+2. **Python 3.8 이상 설치**: [python.org](https://www.python.org/downloads/windows/)에서 설치합니다. Git Bash에서 `python3 --version`, `python --version`, `py -3 --version` 중 하나가 3.8 이상을 출력하면 됩니다. Windows에 기본으로 들어 있는 `python`은 Microsoft Store로 안내하는 바로가기일 뿐 Python이 아닙니다.
+3. **Claude 데스크톱 앱이나 터미널을 완전히 종료했다가 다시 엽니다** (데스크톱 앱은 트레이 아이콘에서도 종료). 이미 실행 중인 Claude Code는 설치 전의 환경을 그대로 쓰기 때문입니다.
+4. **확인**: 새 세션에서 `/cachekeeper:audit`를 실행합니다. 리포트가 나오면 Git Bash와 Python을 모두 찾은 것이고, Hook도 같은 둘로 실행됩니다. `Python 3.8 or newer is required`가 나오면 2번을, 명령을 아예 실행하지 못하면 1번을 다시 확인하세요. Python이 없으면 Hook은 오류 없이 조용히 꺼져 있으므로 이 확인이 필요합니다.
+
+- **WSL**: WSL에서 실행하는 Claude Code(데스크톱 앱의 WSL 환경 포함)는 Linux와 같습니다. Git for Windows는 필요 없고, cachekeeper를 WSL 안의 Claude Code에 설치하면 됩니다. Python은 WSL의 Ubuntu에 기본으로 들어 있습니다.
+- 제작자는 Ubuntu에서 사용합니다. Windows는 CI(GitHub의 Windows 러너, Git Bash)에서 테스트했고, Claude Code가 설치된 실제 Windows 기기에서는 아직 확인하지 못했습니다.
+
+> [!NOTE]
+> MSIX 패키지로 설치된 Windows 데스크톱 앱에는, 앱이 자기 폴더(`%APPDATA%\Claude`)에 풀어 둔 플러그인 파일을 Git Bash나 Python 같은 외부 프로그램이 보지 못하는 버그가 있습니다([anthropics/claude-code#96087](https://github.com/anthropics/claude-code/issues/96087)). 마켓플레이스에서 설치한 cachekeeper는 보통 `C:\Users\<이름>\.claude\plugins`에 들어가므로 해당되지 않을 것으로 보지만, 확인하지는 못했습니다. 해당되더라도 0.8.0부터는 Hook이 파일을 찾지 못하면 조용히 끝나므로 무한 반복은 생기지 않고, 가드와 Keep-Alive가 동작하지 않을 뿐입니다.
 
 ---
 
@@ -150,7 +173,7 @@ A. 네. [Claude Code 공식 문서](https://code.claude.com/docs/en/prompt-cachi
 A. `promptCacheTtl`을 `1h`로 설정하지 않았다면 5분 캐시로 동작하므로 Keep-Alive는 비활성화되며, 가드 및 감사는 API 정가 기준으로 계산됩니다. 만약 `1h`로 설정하여 사용 중이라면 `CACHEKEEPER_BASIS=api`를 환경변수에 지정해 API 정가 기준으로 계산하도록 설정하세요.
 
 **Q. Windows나 macOS에서도 동작하나요?**  
-A. CI가 두 운영체제에서도 테스트를 실행합니다. Claude Code가 Hook을 시작하는 방식 그대로 `sh`로 실행하는 테스트도 포함됩니다. 제작자는 Ubuntu에서 사용합니다. Windows에서는 Claude Code가 플러그인 Hook을 실행할 때 쓰는 Git Bash(Git for Windows)가 있어야 하며, 없으면 Hook이 시작되지 않습니다([자세히](#요구-사항과-설정)).
+A. 네. macOS는 Python 3.8 이상만 있으면 되고, Windows에서는 Git for Windows와 Python을 설치한 뒤 앱을 다시 시작해야 합니다([Windows에서 사용하려면](#windows에서-사용하려면)). CI가 세 운영체제 모두에서 테스트를 실행하며, 제작자는 Ubuntu에서 사용합니다.
 
 **Q. 대화 데이터가 외부로 전송되나요?**  
 A. 전혀 전송되지 않습니다. 로컬 PC의 대화 기록만 읽어 분석합니다. 플러그인 데이터 디렉터리의 로그 파일(`events.jsonl`)에는 모델명, 토큰 수, 결정 결과만 기록되며 프롬프트 내용은 일체 포함되지 않습니다.
@@ -392,7 +415,7 @@ cachekeeper compaction
 - **Claude Code 2.1.280 이상** (`PreModelSwitch` 및 `asyncRewake` 지원).
 - 로컬 저장소 코드로 직접 테스트: `claude --plugin-dir /path/to/cachekeeper`
 - **Linux, macOS, Windows** 지원. CI가 세 운영체제 모두에서 테스트를 실행합니다([테스트](#테스트)).
-- **Windows에서는 Git Bash**(Git for Windows에 포함)가 필요합니다. Claude Code는 Windows에서 플러그인 Hook 명령을 Git Bash로 실행하고, Git Bash가 없으면 PowerShell로 실행합니다. cachekeeper의 Hook은 `sh`로 시작하므로 PowerShell에서는 실행되지 않습니다. 이때 Claude Code는 Hook 오류를 표시하고 모든 전환을 통과시키며, Keep-Alive도 동작하지 않습니다.
+- **Windows에서는 Git for Windows(Git Bash)도 필요합니다.** Claude Code가 플러그인 Hook을 Git Bash로 실행하기 때문입니다. 준비 방법은 [Windows에서 사용하려면](#windows에서-사용하려면)을 보세요.
 
 ### 환경 변수 목록 (`~/.claude/settings.json`)
 
