@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.0.1 — 2026-09-24
+
+Three fixes from a code review (Astra), each with a test that fails on 1.0.0:
+
+- No pings where the transcript never shows the cache. When the last requests in view carried no cache write, the
+  keep-alive took the cache to be the one-hour cache and waited to ping. On the author's machine that was 12 of 91
+  transcripts of 100k tokens or more, all of them Claude Code running DeepSeek, which reports no cache writes; the
+  keep-alive had started 5 waits in them and only the user's return kept them from pinging. It now reads further
+  back for a cache write and, finding none, stands down (`unknown cache`, not logged, like `5-minute cache`).
+  The 79 other large transcripts are waited in as before; the slowest read took 0.1 s.
+- Auto mode pings every 55 minutes, the interval its replay prices. It used `CACHEKEEPER_KEEPALIVE_MINUTES`, so a
+  shorter interval would have sent more pings than the policy was chosen for; that setting now applies with
+  `CACHEKEEPER_KEEPALIVE=1` only.
+- The replay credits pings with a prevented rebuild only when the request after them read the cache. A request that
+  rebuilt anyway, after a compaction or an effort change, had counted too. On the author's history this changed
+  nothing (4 credits, all real), so the auto policy stays as it was.
+
 ## 1.0.0 — 2026-09-24
 
 - First stable release; the plugin behaves as in 0.10.0.

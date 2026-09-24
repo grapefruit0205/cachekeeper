@@ -43,7 +43,8 @@ from . import autopolicy
 from .transcripts import PING_MARK as MARK, PING_TEXT, parse_time
 
 POLL_SECONDS = 30
-QUIET = ("small", "5-minute cache", "no request")    # immediate stand-downs at most turn ends: not logged
+# Immediate stand-downs, which happen at most turn ends: not logged.
+QUIET = ("small", "5-minute cache", "unknown cache", "no request")
 LATE_SECONDS = 60           # closer than this to the hour's end, a ping may land after the cache is gone
 KEEP_PINGS_SECONDS = 86_400
 REPLY = "(keep-alive)"
@@ -105,8 +106,11 @@ def policy_for(env: dict[str, str], directory: Path, now: float, recompute: bool
         decision = autopolicy.read_decision(directory) or autopolicy.DEFAULT
     if decision.get("source") == "off":
         return None
-    return Policy(interval=policy.interval,
-                  max_pings=int(float(decision.get("cap_hours", 0)) * 3600 // policy.interval),
+    # The replay that chose the decision prices a ping every 55 minutes: auto mode pings at that interval, and
+    # CACHEKEEPER_KEEPALIVE_MINUTES applies with CACHEKEEPER_KEEPALIVE=1 only.
+    interval = Policy().interval
+    return Policy(interval=interval,
+                  max_pings=int(float(decision.get("cap_hours", 0)) * 3600 // interval),
                   min_context=int(decision.get("min_context", 0)))
 
 
@@ -116,16 +120,19 @@ class View:
     anchor: float | None = None      # when the last main-conversation request started
     last_human: float = 0.0          # the user's last message, or another session's (0 when none is in view)
     context: int = 0                 # tokens the next request re-sends; 0 right after a compaction
-    ttl: int | None = None           # 3600 or 300 from the last cache write; None when none is in view
+    ttl: int | None = None           # 3600 or 300 from the last cache write; None when none is in view, as with
+                                     # a backend that reports no cache writes: then nothing says a ping would pay
 
 
 def plan(view: View, pings: list[float], started_at: float, now: float, policy: Policy) -> tuple[str, float, str]:
     """``("ping", 0, "")``, ``("wait", seconds, "")`` or ``("stop", 0, reason)`` for one look at the session."""
-    ttl = view.ttl or 3600
     if view.anchor is None:
         return "stop", 0.0, "no request"
     if view.context < policy.min_context:
         return "stop", 0.0, "small"
+    if view.ttl is None:
+        return "stop", 0.0, "unknown cache"
+    ttl = view.ttl
     if ttl < 3600:
         return "stop", 0.0, "5-minute cache"
     if view.last_human > started_at:
@@ -164,7 +171,8 @@ def _is_arrival(entry: dict) -> bool:
 
 
 def view_of(lines: list[str]) -> tuple[View, bool]:
-    """Read transcript lines; the flag says whether the last request's start and a user message were in view."""
+    """Read transcript lines; the flag says whether the last request's start, a user message and a cache write
+    were in view."""
     times: dict[str, float] = {}
     first_block: dict[str, dict] = {}
     last_id: str | None = None
@@ -213,11 +221,12 @@ def view_of(lines: list[str]) -> tuple[View, bool]:
             anchor = last_human     # a message sent after it: its request is the latest
     context = 0 if compacted else sum(int(last_usage.get(key) or 0) for key in (
         "input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "output_tokens"))
-    return View(anchor, last_human, context, ttl), (anchor is not None and last_human > 0)
+    return View(anchor, last_human, context, ttl), (anchor is not None and last_human > 0 and ttl is not None)
 
 
 def read_view(transcript: Path, window: int = 2_000_000, limit: int = 64_000_000) -> View:
-    """The transcript's view, reading back from the end until the last request and a user message are in it."""
+    """The transcript's view, reading back from the end until the last request, a user message and a cache write
+    are in it."""
     try:
         with open(transcript, "rb") as stream:
             size = stream.seek(0, os.SEEK_END)

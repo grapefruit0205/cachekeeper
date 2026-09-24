@@ -66,6 +66,12 @@ def turn() -> list[dict]:
     ]
 
 
+def uncached(entries) -> list[dict]:
+    """The same turn from a backend that reports no cache writes: plain input and output tokens only."""
+    return [{**entry, "message": {**entry["message"], "usage": {"input_tokens": 152_000, "output_tokens": 300}}}
+            if entry["type"] == "assistant" else entry for entry in entries]
+
+
 def lines(entries) -> list[str]:
     return [json.dumps(entry) for entry in entries]
 
@@ -123,6 +129,22 @@ class ViewTests(unittest.TestCase):
         self.assertEqual(view.last_human, at(0))
         self.assertEqual(view.anchor, at(300))
 
+    def test_reads_further_back_until_a_cache_write_is_in_view(self):
+        entries = [prompt("u1", 0), attachment("a1", 0.1, "u1"), reply("r1", 5, "a1", "msg_1")] + [
+            {**tool_result(f"f{i}", 6 + i, "r1"), "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t", "content": "x" * 2_000}]}} for i in range(200)
+        ] + [prompt("u2", 290), attachment("a9", 300, "u2"), reply("r9", 301, "a9", "msg_9", write=0)]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "s.jsonl"
+            path.write_text("\n".join(lines(entries)) + "\n", encoding="utf-8")
+            view = read_view(path, window=10_000)
+        self.assertEqual((view.anchor, view.ttl), (at(300), 3600))
+
+    def test_a_backend_that_reports_no_cache_writes_leaves_the_ttl_unknown(self):
+        # Claude Code pointed at another provider's model (DeepSeek, on the author's machine) records usage
+        # without cache writes: nothing tells the cache's lifetime.
+        self.assertIsNone(view_of(lines(uncached(turn())))[0].ttl)
+
 
 class PlanTests(unittest.TestCase):
     VIEW = View(anchor=1000.0, last_human=900.0, context=300_000, ttl=3600)
@@ -136,6 +158,7 @@ class PlanTests(unittest.TestCase):
         cases = {
             "small": View(1000.0, 900.0, 99_999, 3600),
             "5-minute cache": View(1000.0, 900.0, 300_000, 300),
+            "unknown cache": View(1000.0, 900.0, 300_000, None),
             "no request": View(None, 900.0, 300_000, 3600),
         }
         for reason, view in cases.items():
@@ -161,6 +184,18 @@ class PlanTests(unittest.TestCase):
                                   "CACHEKEEPER_KEEPALIVE_MIN_TOKENS": "200000"})
         self.assertEqual(custom, Policy(3000, 2, 200_000))
         self.assertEqual(Policy.from_env({"CACHEKEEPER_KEEPALIVE_MINUTES": "junk"}).interval, 3300)
+
+    def test_auto_mode_pings_every_55_minutes_the_interval_its_replay_prices(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory) / "keepalive"
+            folder.mkdir()
+            (folder / "policy.json").write_text(json.dumps({"source": "history", "min_context": 100_000,
+                                                            "cap_hours": 3.0}))
+            env = {"CACHEKEEPER_KEEPALIVE_MINUTES": "30"}
+            auto = keepalive.policy_for(env, Path(directory), 0.0, recompute=False)
+            fixed = keepalive.policy_for({**env, "CACHEKEEPER_KEEPALIVE": "1"}, Path(directory), 0.0)
+        self.assertEqual(auto, Policy(3300, 3, 100_000))
+        self.assertEqual(fixed.interval, 1800)
 
 
 class Clock:
@@ -210,6 +245,11 @@ class WaitTests(unittest.TestCase):
         self.assertIsNone(state["generation"])
         [record] = self.records
         self.assertEqual((record["decision"], record["reason"], record["idle_seconds"]), ("ping", "1/3", 3300))
+
+    def test_no_ping_when_the_transcript_never_shows_the_cache(self):
+        self.transcript.write_text("\n".join(lines(uncached(turn()))) + "\n", encoding="utf-8")
+        code, text = self.run_wait(Clock(at(45)))
+        self.assertEqual((code, text, self.records), (0, "", []))     # stands down at once, and quietly
 
     def test_on_by_default_in_auto_mode_and_off_only_when_asked(self):
         for value, expected in (("", "auto"), ("auto", "auto"), ("Auto ", "auto"), ("1", "fixed"), ("on", "fixed"),

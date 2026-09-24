@@ -12,4 +12,4 @@ Three parts, all local and dependency-free:
   while its user is away, for as long as that is cheaper than the rebuild.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"

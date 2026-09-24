@@ -219,12 +219,13 @@ def idle_rebuild_tokens(previous: Request, request: Request, session: Session, p
 
     The idle rebuild the request actually made; or, when keep-alive pings kept the cache through a break
     longer than its TTL, the rebuild they prevented, estimated as the whole conversation, as an idle rebuild
-    writes it; else nothing.
+    writes it; else nothing. Pings are credited only when the request then read the cache: a request that
+    rebuilt anyway, after a compaction or an effort change, shows they prevented nothing.
     """
     if is_rebuild(request) and classify(previous, request, session) == "idle expiry":
         return request.writes
     seconds = (request.at - previous.at).total_seconds()
-    if pinged and seconds >= session.ttl_seconds and request.model == previous.model:
+    if pinged and not is_rebuild(request) and seconds >= session.ttl_seconds and request.model == previous.model:
         return previous.next_context
     return 0
 

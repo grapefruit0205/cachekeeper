@@ -92,6 +92,16 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(report["keepalive"]["prevented_rebuilds"], 1)
         self.assertEqual(report["rebuilds"]["idle expiry"]["count"], 0)
 
+    def test_a_rebuild_after_the_pings_is_not_theirs_to_claim(self):
+        # The pings kept the cache, but the effort change on return rewrote it anyway: they saved nothing.
+        entries = (response("m1", 0, "claude-opus-5", write_1h=300_000)
+                   + ping(55, 1) + response("p1", 55.1, "claude-opus-5", read=300_000, write_1h=300, output=9)
+                   + ping(110, 2) + response("p2", 110.1, "claude-opus-5", read=300_300, write_1h=300, output=9)
+                   + response("m2", 150, "claude-opus-5", write_1h=302_600, effort="high"))
+        write(self.projects / "p" / "s.jsonl", entries, T0.timestamp())
+        [stretch] = idle_gaps(read_sessions(self.projects, T0 - dt.timedelta(days=1)))
+        self.assertEqual(stretch.rebuild_tokens, 0)
+
     def test_idle_stretches_outlive_the_transcripts(self):
         path = self.data / "keepalive" / "gaps.jsonl"
         first = [gap(1.5, start=i * 3600, session="a") for i in range(6)]
