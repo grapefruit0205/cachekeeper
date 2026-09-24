@@ -27,12 +27,22 @@ class DecideTests(unittest.TestCase):
         specific = output["hookSpecificOutput"]
         self.assertEqual(specific["permissionDecision"], "ask")
         self.assertIn("450k tokens", specific["permissionDecisionReason"])
-        self.assertIn("$9.00", specific["permissionDecisionReason"])
+        # On the one-hour cache the cost is counted as subscription usage: a write at the input price.
+        self.assertIn("$4.50 of subscription usage", specific["permissionDecisionReason"])
         self.assertIn("fable-5-1 subagent", specific["permissionDecisionReason"])
         # The confirmation is a typed command with the resolved id: re-picking in the desktop
         # app's picker sends nothing, and an alias can resolve to another version.
         self.assertIn("`/model claude-fable-5-1` within 120s", specific["permissionDecisionReason"])
         self.assertEqual(pending, {"s1": {"to_model": "claude-fable-5-1", "at": 1000.0}})
+
+    def test_list_prices_on_request_or_on_the_five_minute_cache(self):
+        listed, _ = decide(EVENT, {}, 1000.0, Config(basis="api"))
+        self.assertIn("$9.00 at list price", listed["hookSpecificOutput"]["permissionDecisionReason"])
+        short = {**EVENT, "cache_ttl": "5m", "estimated_cache_write_usd": 5.625}
+        output, _ = decide(short, {}, 1000.0, Config())
+        self.assertIn("$5.62", output["hookSpecificOutput"]["permissionDecisionReason"])
+        korean, _ = decide(EVENT, {}, 1000.0, Config(lang="ko"))
+        self.assertIn("구독 사용량 기준", korean["hookSpecificOutput"]["permissionDecisionReason"])
 
     def test_the_same_switch_again_inside_the_window_is_the_confirmation(self):
         _, pending = decide(EVENT, {}, 1000.0, Config())
@@ -69,6 +79,9 @@ class DecideTests(unittest.TestCase):
         self.assertTrue(warm)
         self.assertEqual(tokens, 450_000)
         self.assertAlmostEqual(usd, 450_000 * 20.0 / 1_000_000)  # Fable 5.1 one-hour write: 2 x $10
+        self.assertAlmostEqual(at_stake({**EVENT, "estimated_cache_write_usd": None}, "subscription")[2],
+                               450_000 * 10.0 / 1_000_000)
+        self.assertAlmostEqual(at_stake(EVENT, "subscription")[2], 4.5)
 
     def test_warn_mode_never_blocks_and_off_mode_is_silent(self):
         output, pending = decide(EVENT, {}, 0.0, Config(mode="warn"))
@@ -85,7 +98,8 @@ class DecideTests(unittest.TestCase):
 
     def test_config_from_env(self):
         config = Config.from_env({"CACHEKEEPER_MODE": "WARN", "CACHEKEEPER_MIN_USD": "2.5", "LANG": "ko_KR.UTF-8"})
-        self.assertEqual((config.mode, config.min_usd, config.lang), ("warn", 2.5, "ko"))
+        self.assertEqual((config.mode, config.min_usd, config.lang, config.basis), ("warn", 2.5, "ko", "auto"))
+        self.assertEqual(Config.from_env({"CACHEKEEPER_BASIS": "api"}).basis, "api")
         self.assertEqual(Config.from_env({"CACHEKEEPER_MODE": "bogus"}).mode, "ask")
         self.assertEqual(language({"CACHEKEEPER_LANG": "en", "LANG": "ko_KR.UTF-8"}), "en")
 
@@ -110,7 +124,8 @@ class HookTests(unittest.TestCase):
         self.assertEqual([r["decision"] for r in records], ["ask", "allow", "switched"])
         self.assertEqual(set(records[0]) - {"at"}, {
             "event", "session_id", "source", "from_model", "to_model", "context_tokens",
-            "prompt_cache_warm", "cache_ttl", "estimated_cache_write_usd", "pricing", "decision"})
+            "prompt_cache_warm", "cache_ttl", "estimated_cache_write_usd", "basis", "pricing", "decision"})
+        self.assertEqual((records[0]["basis"], records[0]["estimated_cache_write_usd"]), ("subscription", 4.5))
 
     def test_a_resume_restoring_the_model_keeps_the_pending_ask(self):
         # Found live: `claude -p --resume` fires PostModelSwitch(source=resume) before the repeat.

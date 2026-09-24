@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from cachekeeper import compaction
-from cachekeeper.pricing import price_for
+from cachekeeper.pricing import SUBSCRIPTION_READ, price_for
 from cachekeeper.transcripts import read_sessions
 from test_audit import T0, at, response, write
 
@@ -50,8 +50,20 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual(outcome.compactions, 2)
         self.assertAlmostEqual(outcome.read_saved, ((300_000 - 90_000) + (500_000 - 90_000)) * OPUS.cache_read / 1e6,
                                places=4)
-        one = lambda read: (read * OPUS.cache_read + 8_000 * OPUS.output + 90_000 * OPUS.write_1h) / 1e6
+        one = lambda read: (read * OPUS.cache_read + compaction.SUMMARY_TOKENS * OPUS.output
+                            + 90_000 * OPUS.write_1h) / 1e6
         self.assertAlmostEqual(outcome.compaction_cost, one(300_000) + one(290_000), places=4)
+
+    def test_on_subscription_usage_only_rebuilds_and_the_compaction_itself_count(self):
+        sessions = self.sessions(turns([100_000, 300_000, 500_000, 700_000]))
+        # The system prompt and tools stay cached: of the 70k after a compaction, 40k are written.
+        outcome = compaction.replay(sessions, 400_000, 70_000, reread=20_000, basis="subscription", written=40_000)
+        listed = compaction.replay(sessions, 400_000, 70_000, reread=20_000, written=40_000)
+        self.assertEqual(outcome.compactions, 2)
+        read = OPUS.input * SUBSCRIPTION_READ       # next to nothing: the reads saved are a 55th of the listed ones
+        self.assertAlmostEqual(outcome.read_saved, listed.read_saved * read / OPUS.cache_read, places=6)
+        one = lambda context: (context * read + compaction.SUMMARY_TOKENS * OPUS.output + 60_000 * OPUS.input) / 1e6
+        self.assertAlmostEqual(outcome.compaction_cost, one(300_000) + one(290_000), places=6)
 
     def test_a_real_compaction_is_followed_not_counted(self):
         entries = turns([300_000, 900_000]) + compact_boundary(12, "c1") + turns([80_000, 150_000], start=20)
@@ -72,11 +84,23 @@ class ReplayTests(unittest.TestCase):
         paths = sorted((self.projects / "p").glob("*.jsonl"))
         self.assertEqual(compaction.measured_after(paths), 64_003)
 
+    def test_what_the_first_request_after_a_compaction_writes_is_measured(self):
+        body = (turns([900_000]) + compact_boundary(6, "c1")
+                + response("m10", 10, "claude-opus-5", read=20_000, write_1h=44_000))
+        write(self.projects / "p" / "a.jsonl", body, T0.timestamp())
+        self.assertEqual(compaction.measured_restart([self.projects / "p" / "a.jsonl"]), (64_003, 44_003))
+
     def test_a_long_stretch_at_a_large_context_pays_for_the_compaction(self):
         grow = [100_000, 200_000, 300_000, 400_000] + [400_000 + 2_000 * step for step in range(1, 41)]
         text = compaction.report(self.sessions(turns(grow)), [], "en", total=100.0, days=1.0)
         self.assertIn("Best window that holds up under the cautious assumption", text)
         self.assertIn("default", text)          # no real compaction to measure: 70k assumed
+
+    def test_the_report_names_its_yardstick(self):
+        grow = [100_000, 200_000, 300_000, 400_000] + [400_000 + 2_000 * step for step in range(1, 41)]
+        text = compaction.report(self.sessions(turns(grow)), [], "en", 100.0, 1.0, "subscription")
+        self.assertIn("on subscription usage", text)
+        self.assertIn("구독 사용량", compaction.report(self.sessions(turns(grow)), [], "ko", 100.0, 1.0, "subscription"))
 
     def test_a_session_too_short_to_repay_a_compaction_says_so(self):
         sessions = self.sessions(turns([100_000 * step for step in range(1, 10)]))

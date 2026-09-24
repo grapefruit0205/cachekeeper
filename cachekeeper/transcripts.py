@@ -18,8 +18,10 @@ from pathlib import Path
 from typing import Iterable, Iterator
 
 MODEL_COMMAND = re.compile(r"<command-name>/model</command-name>.*?<command-args>(.*?)</command-args>", re.S)
-# In every message the keep-alive wakes the model with; the request answering it is a ping, not the user.
+# Every message the keep-alive wakes the model with says "keep-alive ping 2 of 3, not an error: ..."; the request
+# answering it is a ping, not the user. A message that only talks about pings does not say that.
 PING_MARK = "keep-alive ping"
+PING_TEXT = re.compile(r"keep-alive ping \d+ of \d+, not an error")
 
 
 @dataclass
@@ -61,6 +63,7 @@ class Session:
     path: Path
     requests: list[Request] = field(default_factory=list)
     markers: list[Marker] = field(default_factory=list)
+    entrypoint: str = ""    # claude-desktop, cli, sdk-cli (`claude -p`), claude-vscode, ...
 
     @property
     def ttl_seconds(self) -> int:
@@ -84,6 +87,12 @@ def _text(content: object) -> str:
     if isinstance(content, list):
         return " ".join(str(block.get("text", "")) for block in content if isinstance(block, dict))
     return ""
+
+
+def is_ping(entry: dict, text: str) -> bool:
+    """A message the keep-alive woke the model with; not one that mentions pings, such as a compaction summary
+    or a user's question about them."""
+    return not entry.get("isCompactSummary") and PING_TEXT.search(text) is not None
 
 
 def _usage(request: Request, usage: dict) -> None:
@@ -118,6 +127,8 @@ def read_session(path: Path, since: dt.datetime, seen: set[str]) -> Session:
                 continue
             kind = entry.get("type")
             message = entry.get("message") if isinstance(entry.get("message"), dict) else {}
+            if not session.entrypoint and isinstance(entry.get("entrypoint"), str):
+                session.entrypoint = entry["entrypoint"]
             if kind == "assistant":
                 usage = message.get("usage")
                 message_id = message.get("id") or entry.get("requestId")
@@ -143,7 +154,7 @@ def read_session(path: Path, since: dt.datetime, seen: set[str]) -> Session:
                         by_id[message_id] = (request, output)
             elif kind == "user":
                 text = _text(message.get("content"))
-                if PING_MARK in text:
+                if is_ping(entry, text):
                     ping_pending = True
                 match = MODEL_COMMAND.search(text)
                 if match:

@@ -15,9 +15,9 @@ DAY = 86_400
 NOW = T0.timestamp() + 2 * DAY
 
 
-def gap(hours, context=300_000, rebuild=3.0, start=0.0, session="s"):
-    # Opus 5 list prices: a cache read of 300k tokens costs $0.15, the one-hour rewrite $3.
-    return Gap(hours * 3600, context, 0.5, rebuild, NOW - DAY + start, session)
+def gap(hours, context=300_000, rebuild=300_000, start=0.0, session="s"):
+    # Opus 5 on subscription usage (the default here): a 300k rewrite counts $1.50, a ping under a cent.
+    return Gap(hours * 3600, context, "claude-opus-5", rebuild, NOW - DAY + start, session)
 
 
 def ping(minutes, number):
@@ -38,10 +38,10 @@ class DecideTests(unittest.TestCase):
 
     def test_a_near_tie_goes_to_fewer_pings(self):
         # A small session's break adds a few cents: not worth pinging every small session for.
-        gaps = [gap(1.5, start=i * 3600) for i in range(12)] + [gap(1.5, context=50_000, rebuild=0.1, start=99_000)]
+        gaps = [gap(1.5, start=i * 3600) for i in range(12)] + [gap(1.5, context=50_000, rebuild=10_000, start=99_000)]
         decision = autopolicy.decide(gaps, NOW, 1, 1)
         self.assertEqual((decision["min_context"], decision["pings"]), (300_000, 12))
-        exact = autopolicy.decide(gaps[:12] + [gap(1.5, context=50_000, rebuild=3.0, start=99_000)], NOW, 1, 1)
+        exact = autopolicy.decide(gaps[:12] + [gap(1.5, context=50_000, rebuild=50_000, start=99_000)], NOW, 1, 1)
         self.assertEqual(exact["min_context"], 0)       # a real difference still wins
 
     def test_too_little_history_uses_the_defaults(self):
@@ -56,8 +56,15 @@ class DecideTests(unittest.TestCase):
         self.assertEqual(autopolicy.decide([], NOW, 0, 5)["why"], "5-minute cache")
 
     def test_only_the_recent_window_counts(self):
-        old = [Gap(5400, 300_000, 0.5, 3.0, NOW - 90 * DAY + i, "s") for i in range(12)]
+        old = [Gap(5400, 300_000, "claude-opus-5", 300_000, NOW - 90 * DAY + i, "s") for i in range(12)]
         self.assertEqual(autopolicy.decide(old, NOW, 1, 1)["source"], "default")
+
+    def test_sessions_never_returned_to_cost_pings_but_are_not_stretches(self):
+        left = [Gap(30 * 3600, 300_000, "claude-opus-5", 0, NOW - 2 * DAY + i, "t", returned=False) for i in range(12)]
+        self.assertEqual(autopolicy.decide(left, NOW, 1, 1)["source"], "default")    # nothing to learn from yet
+        decision = autopolicy.decide([gap(1.5, start=i * 3600) for i in range(12)] + left, NOW, 1, 1)
+        # Each costs as many pings as the cap allows: the one-hour cap still bridges every lunch, with fewest.
+        self.assertEqual((decision["stretches"], decision["cap_hours"], decision["pings"]), (12, 1.0, 24))
 
 
 class HistoryTests(unittest.TestCase):
@@ -76,10 +83,10 @@ class HistoryTests(unittest.TestCase):
         write(self.projects / "p" / "s.jsonl", entries, T0.timestamp())
         sessions = read_sessions(self.projects, T0 - dt.timedelta(days=1))
         self.assertEqual([r.ping for r in sessions[0].requests], [False, True, True, False])
-        [stretch], _ = idle_gaps(sessions)
+        [stretch] = idle_gaps(sessions)
         self.assertEqual(stretch.seconds, 150 * 60)
         # The pings kept the cache, so nothing was rewritten; the stretch carries the rewrite they saved.
-        self.assertAlmostEqual(stretch.rebuild_cost, (300_000 + 3 + 100) * 10.0 / 1_000_000)
+        self.assertEqual(stretch.rebuild_tokens, 300_000 + 3 + 100)
         report = analyze(sessions, 1).to_json()
         self.assertEqual(report["keepalive"]["pings_sent"], 2)
         self.assertEqual(report["keepalive"]["prevented_rebuilds"], 1)
@@ -97,8 +104,8 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(len(path.read_text().splitlines()), 12)
 
     def test_the_policy_is_recomputed_once_a_day(self):
-        with mock.patch.object(autopolicy, "recompute", side_effect=lambda d, p, now: {"computed_at": now,
-                                                                                       "source": "history"}) as run:
+        with mock.patch.object(autopolicy, "recompute", side_effect=lambda d, p, now, basis: {
+                "computed_at": now, "source": "history", "basis": basis}) as run:
             env = {"CLAUDE_CONFIG_DIR": str(self.root)}
             first = autopolicy.current(self.data, env, NOW)
             self.assertEqual(run.call_args.args[1], self.projects)
@@ -108,6 +115,39 @@ class HistoryTests(unittest.TestCase):
             self.assertEqual(run.call_count, 1)
             autopolicy.current(self.data, env, NOW + DAY + 60)
             self.assertEqual(run.call_count, 2)
+
+    def test_a_policy_computed_on_another_yardstick_is_redone(self):
+        folder = self.data / "keepalive"
+        folder.mkdir(parents=True)
+        with mock.patch.object(autopolicy, "recompute", side_effect=lambda d, p, now, basis: {
+                "computed_at": now, "source": "history", "basis": basis}) as run:
+            # Written by 0.5, which priced everything at list prices.
+            (folder / "policy.json").write_text(json.dumps({"computed_at": NOW, "source": "history"}))
+            self.assertEqual(autopolicy.current(self.data, {}, NOW + 60)["basis"], "subscription")
+            (folder / "policy.json").write_text(json.dumps({"computed_at": NOW, "source": "history",
+                                                            "basis": "subscription"}))
+            self.assertEqual(autopolicy.current(self.data, {}, NOW + 60)["computed_at"], NOW)
+            self.assertEqual(autopolicy.current(self.data, {"CACHEKEEPER_BASIS": "api"}, NOW + 60)["basis"], "api")
+            self.assertEqual(run.call_count, 2)
+
+    def test_stretches_stored_by_earlier_versions_still_count(self):
+        path = self.data / "keepalive" / "gaps.jsonl"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"at": NOW - DAY, "session": "a", "seconds": 5400, "context": 300_103,
+                                    "read_price": 0.5, "rebuild_cost": 3.0}) + "\n")
+        [stretch] = autopolicy.load_gaps(path)
+        # 0.4-0.5 kept the cache-read price and the rewrite in list-price dollars: Opus 5, 300k tokens written.
+        self.assertEqual((stretch.model, stretch.rebuild_tokens, stretch.returned), ("opus-5", 300_000, True))
+
+    def test_the_time_since_a_last_message_is_stored_once_no_cap_reaches_past_it(self):
+        path = self.data / "keepalive" / "gaps.jsonl"
+        early = Gap(5 * 3600, 300_000, "claude-opus-5", 0, NOW - 5 * 3600, "t", returned=False)
+        self.assertEqual(autopolicy.remember(path, [], [early]), [])     # the user may still come back
+        self.assertFalse(path.exists())
+        late = Gap(30 * 3600, 300_000, "claude-opus-5", 0, NOW - 5 * 3600, "t", returned=False)
+        autopolicy.remember(path, [], [late])
+        [kept] = autopolicy.load_gaps(path)
+        self.assertEqual((kept.seconds, kept.returned), (30 * 3600, False))
 
     def test_one_recomputation_at_a_time(self):
         lock = self.data / "keepalive" / "policy.lock"
@@ -125,9 +165,13 @@ class HistoryTests(unittest.TestCase):
             entries += response(f"a{day}", base, "claude-opus-5", write_1h=300_000)
             entries += response(f"b{day}", base + 90, "claude-opus-5", write_1h=300_500)
         write(self.projects / "p" / "s.jsonl", entries, T0.timestamp() + 12 * DAY)
-        decision = autopolicy.recompute(self.data, self.projects, T0.timestamp() + 13 * DAY)
-        self.assertEqual((decision["source"], decision["cap_hours"]), ("history", 1.0))
+        decision = autopolicy.recompute(self.data, self.projects, T0.timestamp() + 13 * DAY, "api")
+        self.assertEqual((decision["source"], decision["cap_hours"], decision["basis"]), ("history", 1.0, "api"))
         self.assertEqual(autopolicy.read_decision(self.data), decision)
+        # At list prices a ping re-reads 300k tokens: bridging a 22.5-hour night takes 24 of them, more than the
+        # rewrite. On subscription usage re-reading counts for nothing, and the nights are worth bridging too.
+        overnight = autopolicy.recompute(self.data, self.projects, T0.timestamp() + 13 * DAY, "subscription")
+        self.assertEqual((overnight["cap_hours"], overnight["prevented"]), (24.0, 23))
 
 
 class AutoWaitTests(unittest.TestCase):
@@ -143,7 +187,7 @@ class AutoWaitTests(unittest.TestCase):
     def decided(self, decision):
         folder = self.data / "keepalive"
         folder.mkdir(exist_ok=True)
-        (folder / "policy.json").write_text(json.dumps({"computed_at": NOW, **decision}))
+        (folder / "policy.json").write_text(json.dumps({"computed_at": NOW, "basis": "subscription", **decision}))
 
     def test_auto_mode_waits_under_todays_policy(self):
         self.decided({"source": "history", "min_context": 200_000, "cap_hours": 2.0})

@@ -1,5 +1,5 @@
 {
-  "description": "cachekeeper: before a /model or picker switch forfeits a warm prompt cache, ask with the size of the loss and offer to run just the next request in a subagent on that model; log every switch for `cachekeeper events`; with CACHEKEEPER_KEEPALIVE=1, keep a long session's cache warm while its user is away.",
+  "description": "cachekeeper: before a /model or picker switch forfeits a warm prompt cache, ask with the size of the loss and offer to run just the next request in a subagent on that model; log every switch for `cachekeeper events`; with CACHEKEEPER_KEEPALIVE=1 or auto, keep a long session's cache warm while its user is away.",
   "hooks": {
     "PreModelSwitch": [
       {

@@ -8,9 +8,12 @@ as habits change. Three guards:
   sessions): the defaults, 100k tokens and 3 hours, until there is enough to go on;
 * no combination saves anything, or no session uses the one-hour cache: off, until that changes;
 * Claude Code deletes terminal transcripts 30 days after their last activity (``cleanupPeriodDays``), so every
-  idle stretch seen is also kept, as numbers only (when, how long, how big, what the rebuild cost), in
-  ``keepalive/gaps.jsonl``; the policy reads the last ``WINDOW_DAYS`` of them.
+  idle stretch seen is also kept, as numbers only (when, how long, how big, on which model, what the rebuild
+  wrote), in ``keepalive/gaps.jsonl``; the policy reads the last ``WINDOW_DAYS`` of them. The time since a
+  session's last message is kept once it is past every cap (``SETTLED_SECONDS``), and counted until then.
 
+The replay is priced on the yardstick CACHEKEEPER_BASIS names; ``auto`` means subscription usage here, since
+the keep-alive only waits in one-hour-cache sessions. A stored decision made on another yardstick is stale.
 The recomputation reads the transcripts (about two seconds for a few hundred sessions) inside the background
 Stop hook, at most once a day, never on the user's turn.
 """
@@ -23,7 +26,8 @@ import os
 import time
 from pathlib import Path
 
-from .audit import Gap, best_policy, idle_gaps
+from .audit import SETTLED_SECONDS, Gap, best_policy, idle_gaps
+from .pricing import choose, model_for_read_price, price_for, rates_for, setting
 from .transcripts import read_sessions
 
 MAX_AGE_SECONDS = 86_400
@@ -36,6 +40,10 @@ DEFAULT = {"min_context": 100_000, "cap_hours": 3.0}
 def projects_dir(env: dict[str, str]) -> Path:
     base = env.get("CLAUDE_CONFIG_DIR", "").strip()
     return (Path(base) if base else Path.home() / ".claude") / "projects"
+
+
+def basis_for(env: dict[str, str]) -> str:
+    return choose(setting(env), True)
 
 
 def _paths(directory: Path) -> tuple[Path, Path, Path]:
@@ -52,51 +60,71 @@ def load_gaps(path: Path) -> list[Gap]:
     for line in lines:
         try:
             record = json.loads(line)
-            gaps.append(Gap(float(record["seconds"]), int(record["context"]), float(record["read_price"]),
-                            float(record["rebuild_cost"]), float(record["at"]), str(record["session"])))
+            model = str(record.get("model") or model_for_read_price(float(record["read_price"])))
+            tokens = record.get("rebuild_tokens")
+            if tokens is None:
+                # Written by 0.4-0.5: the rebuild in list-price dollars of one-hour writes.
+                price = price_for(model)
+                tokens = float(record["rebuild_cost"]) * 1_000_000 / price.write_1h if price else 0
+            gaps.append(Gap(float(record["seconds"]), int(record["context"]), model, int(round(float(tokens))),
+                            float(record["at"]), str(record["session"]), bool(record.get("returned", True))))
         except (ValueError, KeyError, TypeError):
             continue
     return gaps
 
 
 def remember(path: Path, known: list[Gap], seen: list[Gap]) -> list[Gap]:
-    """Append the stretches not stored yet; return everything known."""
+    """Append the stretches not stored yet that are settled; return everything known.
+
+    A stretch the user came back from is settled, and so is the time since a last message once no cap reaches
+    past it. Until then it can still become a stretch the user came back from, so it is not stored.
+    """
     keys = {(gap.session, round(gap.at)) for gap in known}
-    new = [gap for gap in seen if (gap.session, round(gap.at)) not in keys]
+    new = [gap for gap in seen if (gap.session, round(gap.at)) not in keys
+           and (gap.returned or gap.seconds >= SETTLED_SECONDS)]
     if new:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as stream:
             for gap in new:
-                stream.write(json.dumps({"at": round(gap.at, 3), "session": gap.session, "seconds": round(gap.seconds),
-                                         "context": gap.context, "read_price": gap.read_price,
-                                         "rebuild_cost": round(gap.rebuild_cost, 6)}) + "\n")
+                rate = rates_for(gap.model, "api")
+                record = {"at": round(gap.at, 3), "session": gap.session, "seconds": round(gap.seconds),
+                          "context": gap.context, "model": gap.model, "rebuild_tokens": gap.rebuild_tokens,
+                          # for 0.4-0.5, which read only these two
+                          "read_price": rate.cache_read if rate else 0.0,
+                          "rebuild_cost": round(gap.rebuild_tokens * rate.write_1h / 1_000_000, 6) if rate else 0.0}
+                if not gap.returned:
+                    record["returned"] = False
+                stream.write(json.dumps(record) + "\n")
     return known + new
 
 
-def decide(gaps: list[Gap], now: float, one_hour_sessions: int, sessions: int) -> dict:
+def decide(gaps: list[Gap], now: float, one_hour_sessions: int, sessions: int, basis: str = "subscription") -> dict:
     """The policy for these idle stretches: ``source`` is history, default or off."""
     window = [gap for gap in gaps if now - gap.at <= WINDOW_DAYS * 86_400]
-    base = {"computed_at": round(now, 3), "stretches": len(window),
+    stretches = [gap for gap in window if gap.returned]
+    base = {"computed_at": round(now, 3), "basis": basis, "stretches": len(stretches),
             "first_at": round(min(gap.at for gap in window), 3) if window else None}
     if sessions and not one_hour_sessions:
         return {**base, "source": "off", "why": "5-minute cache", "min_context": 0, "cap_hours": 0.0}
-    if len(window) < MIN_STRETCHES:
+    if len(stretches) < MIN_STRETCHES:
         return {**base, "source": "default", "why": f"fewer than {MIN_STRETCHES} idle stretches", **DEFAULT}
-    best = best_policy(window)
+    best = best_policy(window, basis)
     if best["net"] <= 0:
         return {**base, "source": "off", "why": "no cap would have saved anything", "min_context": 0, "cap_hours": 0.0}
-    return {**base, "source": "history", "why": f"net ${best['net']:.2f} over {len(window)} idle stretches",
+    return {**base, "source": "history", "why": f"net ${best['net']:.2f} over {len(stretches)} idle stretches",
             "min_context": int(best["min_context"]), "cap_hours": float(best["cap_hours"]),
             "pings": int(best["pings"]), "prevented": int(best["prevented"]), "net_usd": round(best["net"], 4)}
 
 
-def recompute(directory: Path, projects: Path, now: float) -> dict:
+def recompute(directory: Path, projects: Path, now: float, basis: str = "subscription") -> dict:
     policy_path, gaps_path, _ = _paths(directory)
     sessions = read_sessions(projects, dt.datetime.fromtimestamp(now - WINDOW_DAYS * 86_400, dt.timezone.utc))
-    seen, _ = idle_gaps(sessions)
+    seen = idle_gaps(sessions, now)
     known = remember(gaps_path, load_gaps(gaps_path), seen)
+    keys = {(gap.session, round(gap.at)) for gap in known}
+    unsettled = [gap for gap in seen if (gap.session, round(gap.at)) not in keys]
     one_hour = sum(1 for session in sessions if session.ttl_seconds >= 3600)
-    decision = decide(known, now, one_hour, len(sessions))
+    decision = decide(known + unsettled, now, one_hour, len(sessions), basis)
     policy_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = policy_path.with_name(f".{policy_path.name}.{os.getpid()}")
     temporary.write_text(json.dumps(decision), encoding="utf-8")
@@ -115,8 +143,10 @@ def read_decision(directory: Path) -> dict | None:
 def current(directory: Path, env: dict[str, str], now: float | None = None) -> dict:
     """Today's decision: the stored one while it is fresh, else a new one (one process at a time recomputes)."""
     now = time.time() if now is None else now
+    basis = basis_for(env)
     stored = read_decision(directory)
-    if stored and now - float(stored.get("computed_at", 0)) < MAX_AGE_SECONDS:
+    if (stored and now - float(stored.get("computed_at", 0)) < MAX_AGE_SECONDS
+            and stored.get("basis", "api") == basis):
         return stored
     _, _, lock = _paths(directory)
     lock.parent.mkdir(parents=True, exist_ok=True)
@@ -132,7 +162,7 @@ def current(directory: Path, env: dict[str, str], now: float | None = None) -> d
         return stored or {"source": "default", "why": "first computation in progress", **DEFAULT}
     try:
         os.close(handle)
-        return recompute(directory, projects_dir(env), now)
+        return recompute(directory, projects_dir(env), now, basis)
     finally:
         try:
             lock.unlink()

@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import autopolicy
-from .transcripts import PING_MARK as MARK, parse_time
+from .transcripts import PING_MARK as MARK, PING_TEXT, parse_time
 
 POLL_SECONDS = 30
 QUIET = ("small", "5-minute cache", "no request")    # immediate stand-downs at most turn ends: not logged
@@ -142,8 +142,8 @@ def _is_arrival(entry: dict) -> bool:
             return False
         content = " ".join(str(block.get("text", "")) for block in content if isinstance(block, dict))
     text = str(content or "").lstrip()
-    if MARK in text:
-        return False
+    if PING_TEXT.search(text):
+        return False    # a ping's own words, whatever origin Claude Code delivers it with
     origin = entry.get("origin")
     if isinstance(origin, dict):
         return origin.get("kind") in ARRIVALS

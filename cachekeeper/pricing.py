@@ -1,15 +1,35 @@
-"""List prices per million tokens, used only to weigh token classes against each other.
+"""Token prices, and the two yardsticks cachekeeper weighs usage with.
 
-Cache reads bill at a fraction of the input price, cache writes at 1.25x input
-(5-minute TTL) or 2x input (1-hour TTL), output at 5x input. Values follow the
-Claude API price table; Claude Fable 5.1 and Claude Opus 5.5 carry their own
-cache-read rates. A subscription does not bill these amounts: they are a common
-yardstick for "which part of my usage is this", not a bill.
+``Price`` holds a model's list prices per million tokens: cache reads bill at a fraction of the input price,
+cache writes at 1.25x input (5-minute TTL) or 2x input (1-hour TTL), output at 5x input. Values follow the
+Claude API price table; Claude Fable 5.1 and Claude Opus 5.5 carry their own cache-read rates.
+
+A yardstick (``basis``) turns token counts into one amount that can be compared and summed:
+
+* ``api``: what the API bills, at those list prices.
+* ``subscription``: what a Claude subscription's usage limits count. The formula is not published; measured
+  from outside, cache reads count about nothing, cache writes (either TTL) and uncached input count at the
+  input list price, and output at the output list price. Sources: she-llac.com/claude-limits (January 2026,
+  recovered from unrounded usage values: reads fit at 0.18% of the input price, 80% interval 0-0.5%) and the
+  alldonesites.com usage tracker (four Max 20x accounts, to 2026-09-21: Fable 5.1 counts 2.11x Opus 5, near
+  its 2x list ratio). That one-hour writes count at 1x input and that Opus 5.5 follows its list price are
+  assumptions; neither has been measured. An amount on this yardstick is list-price dollars of the tokens the
+  limits count: a share of it is a share of plan usage, not a bill.
+
+Claude Code (2.1.280) gives the main conversation the one-hour cache by default only on a subscription within
+its plan usage; an API key, and a subscription in extra usage (billed at API rates), get five minutes. So
+``choose`` picks the yardstick from the cache TTL unless CACHEKEEPER_BASIS names one — as it should when
+ENABLE_PROMPT_CACHING_1H or a prompt-cache-TTL setting breaks that link.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+BASES = ("subscription", "api")
+# A cache read on the subscription yardstick, as a fraction of the input price: the pooled fit (0.18%, 80%
+# interval 0-0.5%). Next to nothing per request, but the longest sessions read hundreds of millions of tokens.
+SUBSCRIPTION_READ = 0.0018
 
 
 @dataclass(frozen=True)
@@ -25,6 +45,16 @@ class Price:
     @property
     def write_1h(self) -> float:
         return self.input * 2.0
+
+
+@dataclass(frozen=True)
+class Rates:
+    """What one million tokens of each kind count for on one yardstick."""
+    cache_read: float
+    write_5m: float
+    write_1h: float
+    input: float
+    output: float
 
 
 # Ordered: the first substring that matches a model id wins, so the more
@@ -54,6 +84,38 @@ def price_for(model: str | None) -> Price | None:
         if key in lowered:
             return price
     return None
+
+
+def rates(price: Price, basis: str) -> Rates:
+    if basis == "subscription":
+        return Rates(price.input * SUBSCRIPTION_READ, price.input, price.input, price.input, price.output)
+    return Rates(price.cache_read, price.write_5m, price.write_1h, price.input, price.output)
+
+
+def rates_for(model: str | None, basis: str) -> Rates | None:
+    price = price_for(model)
+    return None if price is None else rates(price, basis)
+
+
+def model_for_read_price(read_price: float) -> str:
+    """The first model in the table with this cache-read price (records from before models were stored)."""
+    for key, price in _TABLE:
+        if abs(price.cache_read - read_price) < 1e-9:
+            return key
+    return ""
+
+
+def setting(env: dict[str, str]) -> str:
+    """CACHEKEEPER_BASIS: ``subscription``, ``api``, or ``auto`` (the default) for anything else."""
+    value = env.get("CACHEKEEPER_BASIS", "").strip().lower()
+    return value if value in BASES else "auto"
+
+
+def choose(configured: str, one_hour: bool) -> str:
+    """The yardstick: the configured one, else subscription for the one-hour cache and api for five minutes."""
+    if configured in BASES:
+        return configured
+    return "subscription" if one_hour else "api"
 
 
 def alias_for(model: str | None) -> str:

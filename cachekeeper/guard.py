@@ -3,11 +3,13 @@
 Claude Code hands the hook everything the decision needs: whether the current
 model's cache is still warm (``prompt_cache_warm``), how many tokens the next
 request re-sends (``context_tokens``) and what re-caching them on the new model
-costs (``estimated_cache_write_usd``). The guard adds two things Claude Code
-does not: the size of the loss in the question itself, with the alternative
-that keeps the cache (a subagent on the other model), and a way to confirm in a
-session that cannot show a confirmation dialog — asking for the same switch
-again within ``confirm_seconds``.
+costs at list price (``estimated_cache_write_usd``). The guard adds three things
+Claude Code does not: the size of the loss in the question itself, with the
+alternative that keeps the cache (a subagent on the other model); the loss on
+the yardstick that counts for this session — subscription usage, where a write
+counts at the input price, when the cache lives an hour (see ``pricing``); and a
+way to confirm in a session that cannot show a confirmation dialog — asking for
+the same switch again within ``confirm_seconds``.
 
 ``decide`` is pure: it takes the hook input, the pending confirmations and the
 clock, and returns the hook output plus the new pending state.
@@ -18,7 +20,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from .pricing import alias_for, price_for
+from .pricing import alias_for, choose, price_for, setting
 
 MODES = ("ask", "warn", "off")
 
@@ -31,6 +33,7 @@ class Config:
     confirm_seconds: int = 120
     offer_seconds: int = 900
     lang: str = "en"
+    basis: str = "auto"
 
     @staticmethod
     def from_env(env: dict[str, str] | None = None) -> "Config":
@@ -43,6 +46,7 @@ class Config:
             confirm_seconds=int(_number(env.get("CACHEKEEPER_CONFIRM_SECONDS"), 120)),
             offer_seconds=int(_number(env.get("CACHEKEEPER_OFFER_SECONDS"), 900)),
             lang=language(env),
+            basis=setting(env),
         )
 
 
@@ -64,22 +68,31 @@ def language(env: dict[str, str]) -> str:
     return "en"
 
 
-def at_stake(event: dict) -> tuple[bool, int, float | None]:
+def basis_for(event: dict, config: Config) -> str:
+    """The configured yardstick, else subscription usage when the cache lives an hour."""
+    return choose(config.basis, event.get("cache_ttl") == "1h")
+
+
+def at_stake(event: dict, basis: str = "api") -> tuple[bool, int, float | None]:
     """Is a warm cache about to be forfeited, and how big is it?
 
-    Returns (warm, context_tokens, usd). ``usd`` is Claude Code's own estimate
-    when present, else list price of a 1-hour (or 5-minute) write on the new model.
+    Returns (warm, context_tokens, usd). On list prices ``usd`` is Claude Code's own estimate when present,
+    else the list price of a 1-hour (or 5-minute) write on the new model. On subscription usage a write counts
+    at the input price: Claude Code's estimate without the write premium (2x for 1 hour, 1.25x for 5 minutes).
     """
     warm = event.get("prompt_cache_warm") is True
     tokens = int(event.get("context_tokens") or 0)
+    one_hour = event.get("cache_ttl") == "1h"
     usd = event.get("estimated_cache_write_usd")
     if not isinstance(usd, (int, float)) or isinstance(usd, bool):
         price = price_for(event.get("to_model"))
         if price is None:
             usd = None
         else:
-            rate = price.write_1h if event.get("cache_ttl") == "1h" else price.write_5m
+            rate = price.write_1h if one_hour else price.write_5m
             usd = tokens * rate / 1_000_000
+    if usd is not None and basis == "subscription":
+        usd = usd / (2.0 if one_hour else 1.25)
     return warm, tokens, (float(usd) if usd is not None else None)
 
 
@@ -96,14 +109,15 @@ def decide(event: dict, pending: dict, now: float, config: Config) -> tuple[dict
     }
     if config.mode == "off":
         return None, pending
-    warm, tokens, usd = at_stake(event)
+    basis = basis_for(event, config)
+    warm, tokens, usd = at_stake(event, basis)
     big = (usd is not None and usd >= config.min_usd) or (usd is None and tokens >= config.min_tokens)
     if not warm or not big:
         return None, pending
 
     session = str(event.get("session_id", ""))
     to_model = str(event.get("to_model", ""))
-    reason = message(event, tokens, usd, config)
+    reason = message(event, tokens, usd, config, basis)
     if config.mode == "warn":
         return {"systemMessage": reason}, pending
 
@@ -134,7 +148,7 @@ def offer_for(event: dict) -> dict | None:
     return {"alias": alias, "from_model": str(event.get("from_model", "")), "to_model": str(event.get("to_model", ""))}
 
 
-def message(event: dict, tokens: int, usd: float | None, config: Config) -> str:
+def message(event: dict, tokens: int, usd: float | None, config: Config, basis: str = "api") -> str:
     source = _display(event.get("from_model"))
     target = _display(event.get("to_model"))
     offer = offer_for(event)
@@ -146,8 +160,9 @@ def message(event: dict, tokens: int, usd: float | None, config: Config) -> str:
     # picker sends nothing (verified 2026-09-23), while a typed `/model` always reaches the hook.
     command = f"/model {event.get('to_model') or target}"
     if config.lang == "ko":
-        basis = {"configured": " (설정된 단가 기준)", "default": " (기본 단가로 추정)"}.get(pricing, " (API 정가 기준)")
-        cost = f"약 ${usd:,.2f}{basis}" if usd is not None else "비용 추정 불가"
+        label = (" (구독 사용량 기준: 캐시 쓰기를 입력 단가로 셈)" if basis == "subscription" else
+                 {"configured": " (설정된 단가 기준)", "default": " (기본 단가로 추정)"}.get(pricing, " (API 정가 기준)"))
+        cost = f"약 ${usd:,.2f}{label}" if usd is not None else "비용 추정 불가"
         text = (f"cachekeeper: {source} → {target}로 바꾸면 지금 살아 있는 캐시({ttl})를 버리고 "
                 f"대화 {size} 토큰을 {target}에 다시 씁니다 — {cost}. ")
         if offer:
@@ -157,8 +172,9 @@ def message(event: dict, tokens: int, usd: float | None, config: Config) -> str:
             text += "그래도 바꾸려면 "
         return text + (f"{config.confirm_seconds}초 안에 `{command}`를 입력하세요 "
                        f"(모델 선택기에서 같은 모델을 다시 누르면 전달되지 않을 수 있습니다).")
-    basis = {"configured": " (your configured pricing)", "default": " (default tier, model unknown)"}.get(pricing, " at list price")
-    cost = f"about ${usd:,.2f}{basis}" if usd is not None else "cost unknown"
+    label = (" of subscription usage (a cache write counts at the input price)" if basis == "subscription" else
+             {"configured": " (your configured pricing)", "default": " (default tier, model unknown)"}.get(pricing, " at list price"))
+    cost = f"about ${usd:,.2f}{label}" if usd is not None else "cost unknown"
     text = (f"cachekeeper: switching {source} → {target} forfeits the warm {ttl} cache and re-caches "
             f"{size} tokens on {target} — {cost}. ")
     if offer:

@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.6.0 — 2026-09-24
+
+- Two yardsticks. Every amount cachekeeper shows (the guard's estimate, the audit's shares, the keep-alive and
+  compaction replays) is counted either on subscription usage or at API list prices. Subscription usage is how a
+  plan's usage limits count, measured from outside: cache reads at 0.18% of the input price, cache writes of
+  either TTL and uncached input at the input price, output at the output price (she-llac.com/claude-limits,
+  January 2026; the alldonesites usage tracker, four Max 20x accounts, to 2026-09-21). That one-hour writes count
+  at the input price and that Opus 5.5 follows its list price are assumptions. By default the cache picks the
+  yardstick: the one-hour cache, which Claude Code 2.1.280 gives only to a subscription within its plan usage,
+  counts on subscription usage and the five-minute cache at list prices. `CACHEKEEPER_BASIS=subscription` or
+  `api` fixes it, and `audit`, `keepalive` and `compaction` take `--basis`.
+- The guard: on the one-hour cache the estimate is Claude Code's without the write premium ("약 $4.52 (구독 사용량
+  기준: 캐시 쓰기를 입력 단가로 셈)" where 0.5 said "약 $9.04 (API 정가 기준)"), and `CACHEKEEPER_MIN_USD` counts on
+  the same yardstick, so on subscription usage it asks from about 250k tokens on Opus 5.5 and 100k on Fable 5.1
+  (125k and 50k before). `CACHEKEEPER_MIN_USD=0.5` asks as often as 0.5 did. Each logged event records its
+  yardstick, and `cachekeeper events` sums the two apart.
+- `CACHEKEEPER_KEEPALIVE=auto` picks its policy on subscription usage (the keep-alive only waits on the one-hour
+  cache), or at list prices with `CACHEKEEPER_BASIS=api`. A policy computed on the other yardstick, as every
+  policy from 0.5 was, is recomputed when the next turn ends.
+- The keep-alive replay counts the time after a session's last message: pings sent then cost and prevent nothing.
+  0.5 replayed only the breaks the user came back from, which made long caps look free; at list prices two thirds
+  of the pings at a 24-hour cap on the author's history go to sessions never returned to. That time is stored in
+  `keepalive/gaps.jsonl` once no cap reaches past it (25 hours), and `claude -p` runs, where the keep-alive
+  stands down, are left out. `gaps.jsonl` now keeps the tokens a rebuild wrote and the model, so either yardstick
+  can price them; lines written by 0.4-0.5 are still read. The report says the replay assumes the computer stays
+  awake.
+- Pings are recognized by their exact text ("keep-alive ping N of M, not an error"). 0.5 took any message with
+  "keep-alive ping" in it for one: the audit counted compaction summaries and messages about the pings as pings,
+  and a user who wrote about them was not seen arriving. A ping never counts as the user arriving, whatever
+  origin Claude Code gives it.
+- The compaction replay uses constants measured on the author's 15 real compactions: the first request after one
+  writes 35k of its 70k tokens (the system prompt and tools stay cached), the summary is 5.3k output tokens, and
+  14k tokens of files are read again. The cautious column assumes 45k read again (all the extra context growth
+  after a compaction, an upper bound) and a 15k summary. 0.5 assumed 20k and 60k read again, an 8k summary, and
+  the whole 70k written anew.
+- On the author's 12.7 days (152 sessions, 94% of requests on the one-hour cache), on subscription usage: cache
+  writes are 51% of usage, output 44%, reads 5%; model switches cost 12.5% and idle expiry 11.8%. The best
+  keep-alive is sessions of at least 100k tokens for up to 24 hours: 1,981 pings (2.5%) would have prevented 40
+  rebuilds (11.0%), net +8.5% (at list prices: 300k tokens for 2 hours, +2.4%). An auto-compact window of 300k
+  nets +17% (+10% cautious), 400k +17% (+12%).
+- Both READMEs open with how to use it: install and update, answering the guard, turning on the keep-alive, and
+  the four commands.
+
 ## 0.5.0 — 2026-09-23
 
 - `cachekeeper compaction`: replays the local history with a smaller auto-compact window (200k-800k tokens):

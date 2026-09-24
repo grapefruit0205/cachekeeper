@@ -80,7 +80,8 @@ class ViewTests(unittest.TestCase):
     def test_only_the_user_counts_as_the_user(self):
         entries = turn() + [
             prompt("n1", 100, "<task-notification>done</task-notification>", origin="task-notification", parent="r3"),
-            prompt("p1", 200, f"cachekeeper: {MARK} 1 of 3", origin="human", parent="n1"),
+            # A ping counts as nobody, whatever origin it arrives with.
+            prompt("p1", 200, f"cachekeeper: {MARK} 1 of 3, not an error: reply", origin="human", parent="n1"),
             prompt("l1", 300, "<command-name>/cost</command-name>", origin=None, parent="p1"),
             prompt("l2", 400, "[Request interrupted by user]", origin=None, parent="l1"),
         ]
@@ -91,6 +92,8 @@ class ViewTests(unittest.TestCase):
         self.assertEqual(view_of(lines(peer))[0].last_human, at(600))
         automatic = turn() + [prompt("c1", 700, "continue", origin="auto-continuation", parent="r3")]
         self.assertEqual(view_of(lines(automatic))[0].last_human, at(0))
+        asking = turn() + [prompt("h1", 800, f"why did a {MARK} run at 3 am?", origin="human", parent="r3")]
+        self.assertEqual(view_of(lines(asking))[0].last_human, at(800))
 
     def test_a_message_after_the_last_answer_is_the_latest_request(self):
         view, _ = view_of(lines(turn() + [prompt("u2", 90, "next", parent="r3")]))

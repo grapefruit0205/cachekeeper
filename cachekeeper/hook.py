@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 
 from . import keepalive
-from .guard import Config, at_stake, decide, delegation, offer_for
+from .guard import Config, at_stake, basis_for, decide, delegation, offer_for
 
 MAX_EVENT_BYTES = 1_000_000
 
@@ -51,8 +51,8 @@ def log_event(directory: Path, record: dict) -> None:
         stream.write(json.dumps(record, sort_keys=True) + "\n")
 
 
-def record_for(kind: str, event: dict, decision: str) -> dict:
-    warm, tokens, usd = at_stake(event)
+def record_for(kind: str, event: dict, decision: str, basis: str = "api") -> dict:
+    warm, tokens, usd = at_stake(event, basis)
     return {
         "at": round(time.time(), 3),
         "event": kind,
@@ -64,6 +64,7 @@ def record_for(kind: str, event: dict, decision: str) -> dict:
         "prompt_cache_warm": warm,
         "cache_ttl": event.get("cache_ttl"),
         "estimated_cache_write_usd": None if usd is None else round(usd, 4),
+        "basis": basis,
         "pricing": event.get("pricing"),
         "decision": decision,
     }
@@ -97,7 +98,7 @@ def handle(kind: str, raw: str, env: dict[str, str] | None = None, now: float | 
         elif decision == "allow":
             offers.pop(session, None)   # confirmed: the session itself switches
         write_pending(offers_path, offers)
-        log_event(directory, record_for("pre", event, decision))
+        log_event(directory, record_for("pre", event, decision, basis_for(event, config)))
         return json.dumps(output, ensure_ascii=False) if output else ""
     if kind == "post-model-switch":
         # The switch the guard asked about happened (confirmed in a dialog): drop the pending ask
@@ -111,7 +112,7 @@ def handle(kind: str, raw: str, env: dict[str, str] | None = None, now: float | 
                 write_pending(path, entries)
         if event.get("source") != "resume":
             keepalive.switched(directory, session)  # the next request rebuilds anyway: no ping for it
-        log_event(directory, record_for("post", event, "switched"))
+        log_event(directory, record_for("post", event, "switched", basis_for(event, config)))
         return ""
     if kind == "user-prompt-submit":
         # The first ordinary message after a refused switch is the request the user meant for the

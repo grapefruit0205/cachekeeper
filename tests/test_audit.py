@@ -5,10 +5,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cachekeeper.audit import analyze, run
+from cachekeeper.audit import Gap, analyze, basis_of, idle_gaps, ping_cost, rebuild_cost, run
+from cachekeeper.pricing import SUBSCRIPTION_READ, choose, rates_for, setting
 from cachekeeper.transcripts import read_sessions
 
 T0 = dt.datetime(2026, 9, 20, 9, 0, tzinfo=dt.timezone.utc)
+DAY_SECONDS = 86_400
 
 
 def at(minutes: float) -> str:
@@ -107,6 +109,80 @@ class AuditTests(unittest.TestCase):
     def test_run_reads_from_a_projects_directory(self):
         report = run(self.projects, 1, now=T0 + dt.timedelta(hours=3)).to_json()
         self.assertEqual(report["sessions"], 1)
+        # On the one-hour cache, so on subscription usage unless told otherwise.
+        self.assertEqual((report["basis"], report["one_hour_share"]), ("subscription", 1.0))
+        self.assertEqual(run(self.projects, 1, now=T0 + dt.timedelta(hours=3), basis="api").to_json()["basis"], "api")
+
+    def test_on_subscription_usage_cache_reads_count_next_to_nothing(self):
+        sessions, listed = self.report()
+        _, usage = self.report(basis="subscription")
+        self.assertEqual(listed["basis"], "api")
+        self.assertLess(usage["cost_share_by_class"]["cache read"], listed["cost_share_by_class"]["cache read"] / 20)
+        self.assertEqual(basis_of(sessions, "auto"), "subscription")
+
+    def test_pings_follow_a_last_message_until_the_cap(self):
+        sessions, _ = self.report()
+        [left] = [gap for gap in idle_gaps(sessions, T0.timestamp() + 5 * 3600) if not gap.returned]
+        self.assertEqual((left.seconds, left.rebuild_tokens), (5 * 3600 - 110 * 60, 0))
+        report = analyze(sessions, 1, now=T0.timestamp() + 5 * 3600).to_json()
+        # One ping bridges the 90-minute break; three more follow the last message and prevent nothing.
+        self.assertEqual((report["keepalive"]["pings"], report["keepalive"]["prevented_rebuilds"]), (4, 1))
+
+
+class TranscriptTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.projects = Path(self.directory.name)
+
+    def sessions(self):
+        return read_sessions(self.projects, T0 - dt.timedelta(days=1))
+
+    def test_a_message_about_pings_is_not_a_ping(self):
+        def user(minutes, text, **fields):
+            return [{"type": "user", "timestamp": at(minutes), "message": {"role": "user", "content": text}, **fields}]
+        ping = ("<task-notification><summary>cachekeeper keep-alive ping</summary></task-notification>\n"
+                "cachekeeper: keep-alive ping 1 of 3, not an error: reply with exactly (keep-alive)")
+        entries = (response("m1", 0, "claude-opus-5", write_1h=300_000)
+                   + user(1, "This session is being continued from a previous conversation. The keep-alive ping "
+                             "replied (keep-alive).", isCompactSummary=True)
+                   + response("m2", 2, "claude-opus-5", read=300_000, write_1h=100)
+                   + user(3, "why did a keep-alive ping run at 3 am?", origin={"kind": "human"})
+                   + response("m3", 4, "claude-opus-5", read=300_100, write_1h=100)
+                   + user(60, ping, origin={"kind": "task-notification"})
+                   + response("m4", 60.1, "claude-opus-5", read=300_200, write_1h=300))
+        write(self.projects / "p" / "s.jsonl", entries, T0.timestamp())
+        self.assertEqual([request.ping for request in self.sessions()[0].requests], [False, False, False, True])
+
+    def test_claude_p_runs_are_not_waited_in(self):
+        lines = response("h1", 0, "claude-opus-5", write_1h=300_000) + response("h2", 120, "claude-opus-5",
+                                                                                write_1h=300_000)
+        write(self.projects / "p" / "h.jsonl", [dict(line, entrypoint="sdk-cli") for line in lines], T0.timestamp())
+        [session] = self.sessions()
+        self.assertEqual(session.entrypoint, "sdk-cli")
+        self.assertEqual(idle_gaps([session], T0.timestamp() + DAY_SECONDS), [])
+
+
+class YardstickTests(unittest.TestCase):
+    def test_subscription_usage_counts_reads_as_nothing_and_writes_at_the_input_price(self):
+        usage = rates_for("claude-opus-5-5", "subscription")
+        self.assertEqual((usage.write_5m, usage.write_1h, usage.input, usage.output), (4.0, 4.0, 4.0, 20.0))
+        self.assertAlmostEqual(usage.cache_read, 4.0 * 0.0018)     # about a 28th of the list-price read
+        listed = rates_for("claude-opus-5-5", "api")
+        self.assertEqual((listed.cache_read, listed.write_5m, listed.write_1h), (0.20, 5.0, 8.0))
+
+    def test_the_yardstick_follows_the_cache_unless_it_is_set(self):
+        self.assertEqual((choose(setting({}), True), choose(setting({}), False)), ("subscription", "api"))
+        self.assertEqual(choose(setting({"CACHEKEEPER_BASIS": " API "}), True), "api")
+        self.assertEqual(setting({"CACHEKEEPER_BASIS": "bogus"}), "auto")
+
+    def test_a_ping_on_subscription_usage_costs_mostly_its_own_messages(self):
+        stretch = Gap(2 * 3600, 400_000, "claude-opus-5-5", 400_000)
+        self.assertAlmostEqual(ping_cost(stretch, "subscription"),                                      # $0.008
+                               (400_000 * 4 * SUBSCRIPTION_READ + 500 * 4 + 150 * 20) / 1e6)
+        self.assertAlmostEqual(ping_cost(stretch, "api"), (400_000 * 0.2 + 500 * 8 + 150 * 20) / 1e6)  # $0.087
+        self.assertAlmostEqual(rebuild_cost(stretch, "subscription"), 1.6)
+        self.assertAlmostEqual(rebuild_cost(stretch, "api"), 3.2)
 
 
 if __name__ == "__main__":
