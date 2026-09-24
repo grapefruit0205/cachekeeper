@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.8.0 — 2026-09-24
+
+- After a refused switch, the next message no longer goes to the subagent on its own: the main model first asks
+  ("이 요청을 fable-5-1 서브에이전트로 실행할까요?", AskUserQuestion in the user's language) with two answers, the
+  subagent or the session's own model. A yes hands that one request to a subagent on the model the user picked;
+  when it returns, the main model relays or applies the result and carries on. The session never leaves its model,
+  so there is nothing to switch back. In `claude -p` runs and Agent SDK apps (an `sdk-` entrypoint), where nobody
+  can answer, the request still goes to the subagent at once. `events.jsonl` logs the prompt as `ask` or `delegate`.
+- The refusal says what comes next ("fable-5-1 서브에이전트에 맡길지 먼저 묻고, 끝나면 지금 모델(opus-5-5)로
+  이어집니다") and, in place of the note that a second pick may not reach Claude Code, that the session is still on
+  its model even if a model picker shows the new one. In the desktop app (2.2553.13) a switch blocked mid-turn puts
+  the picker back on the session's model, and picking the new model again then confirms the switch (it did on
+  2026-09-24, six seconds after a refusal); a switch blocked between turns can leave the picker on the new model.
+  The typed `/model` stays the documented confirmation.
+- Windows: the hooks and the CLI read and write UTF-8 whatever the code page. Python on Windows uses the ANSI code
+  page for pipes (cp1252, cp949), where the guard's "→" and "—" cannot be written: the hook failed silently and every
+  switch went through unasked, a Korean prompt could not be read, and `cachekeeper audit --lang ko` through a pipe
+  crashed. Reproduced by forcing those code pages; the new `tests/test_runner.py` runs `sh hooks/run` and
+  `bin/cachekeeper` under them, and CI runs the suite under bash on Ubuntu, macOS and Windows (Git Bash, a Windows
+  path), the way Claude Code runs plugin hooks.
+- No hook exits 2 when its files are gone. Exit 2 is the one code that blocks: it stops a switch, erases a prompt,
+  and makes an `asyncRewake` Stop hook wake the model, which Claude Code 2.1.280 does on exit 2 and on nothing else
+  (read in its code). Ubuntu's `sh` (dash) exits 2 when it cannot open a script, so a session left open while the
+  plugin was uninstalled had every switch blocked, every prompt erased, and its Stop hook waking the model at every
+  turn end without end: the loop in anthropics/claude-code#96087 and #96148. Each hook command now runs the launcher
+  only when it is there. `tests/test_runner.py` runs hooks.json's own commands with the shell Claude Code uses
+  (`/bin/sh -c`; Git Bash on Windows): the keep-alive exits 2 with its UTF-8 message, a small session exits 0, and
+  no hook exits 2 without its files.
+- The READMEs say that Windows needs Git Bash (without it Claude Code runs plugin hooks in PowerShell, where
+  cachekeeper's `sh` launcher cannot start) and that on Windows the keep-alive cannot check whether Claude Code is
+  still running.
+
 ## 0.7.0 — 2026-09-24
 
 - The keep-alive is on by default. An unset `CACHEKEEPER_KEEPALIVE` now means `auto`: the minimum size and the cap

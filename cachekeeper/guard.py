@@ -155,9 +155,11 @@ def message(event: dict, tokens: int, usd: float | None, config: Config, basis: 
     ttl = event.get("cache_ttl") or "?"
     size = f"{tokens / 1000:,.0f}k"
     pricing = event.get("pricing")
-    # The confirmation names the resolved id: an alias such as `opus` can resolve to another
-    # version than the one asked about, and picking the same model again in the desktop app's
-    # picker sends nothing (verified 2026-09-23), while a typed `/model` always reaches the hook.
+    # The confirmation is a typed `/model` with the resolved id: an alias such as `opus` can resolve
+    # to another version than the one asked about, and a second pick in the desktop app's picker only
+    # sometimes reaches the hook. Blocked mid-turn, the app (2.2553.13) puts the picker back and a second
+    # pick confirms (seen 2026-09-24); blocked between turns, the picker can keep showing the new model
+    # and a second pick sends nothing (seen 2026-09-23). Hence the line about the picker.
     command = f"/model {event.get('to_model') or target}"
     if config.lang == "ko":
         label = (" (구독 사용량 기준: 캐시 쓰기를 입력 단가로 셈)" if basis == "subscription" else
@@ -166,55 +168,87 @@ def message(event: dict, tokens: int, usd: float | None, config: Config, basis: 
         text = (f"cachekeeper: {source} → {target}로 바꾸면 지금 살아 있는 캐시({ttl})를 버리고 "
                 f"대화 {size} 토큰을 {target}에 다시 씁니다 — {cost}. ")
         if offer:
-            text += (f"이 작업만 {target}로 하시겠습니까? 하려던 요청을 그대로 보내면 {target} 서브에이전트가 "
-                     f"처리하고, 끝나면 지금 모델({source})로 이어집니다. 세션 모델 자체를 바꾸려면 ")
+            text += (f"이 작업만 {target}로 하려면 하려던 요청을 그대로 보내세요. {target} 서브에이전트에 맡길지 "
+                     f"먼저 묻고, 끝나면 지금 모델({source})로 이어집니다. 세션 모델 자체를 바꾸려면 ")
         else:
             text += "그래도 바꾸려면 "
-        return text + (f"{config.confirm_seconds}초 안에 `{command}`를 입력하세요 "
-                       f"(모델 선택기에서 같은 모델을 다시 누르면 전달되지 않을 수 있습니다).")
+        return text + (f"{config.confirm_seconds}초 안에 `{command}`를 입력하세요. 모델 선택기에 {target} 표시가 "
+                       f"남아 있어도 세션은 {source} 그대로입니다.")
     label = (" of subscription usage (a cache write counts at the input price)" if basis == "subscription" else
              {"configured": " (your configured pricing)", "default": " (default tier, model unknown)"}.get(pricing, " at list price"))
     cost = f"about ${usd:,.2f}{label}" if usd is not None else "cost unknown"
     text = (f"cachekeeper: switching {source} → {target} forfeits the warm {ttl} cache and re-caches "
             f"{size} tokens on {target} — {cost}. ")
     if offer:
-        text += (f"Run just this task on {target} instead? Send the request as you meant to and a {target} "
-                 f"subagent handles it; this session then continues on {source}. To switch the session itself, ")
+        text += (f"To run just this task on {target}, send the request as you meant to: you will be asked whether a "
+                 f"{target} subagent should handle it, and this session then continues on {source}. To switch the "
+                 f"session itself, ")
     else:
         text += "To switch anyway, "
-    return text + (f"type `{command}` within {config.confirm_seconds}s (picking the same model again in a "
-                   f"model picker may not reach Claude Code).")
+    return text + (f"type `{command}` within {config.confirm_seconds}s. If a model picker still shows {target}, "
+                   f"this session is still on {source}.")
 
 
-def delegation(offer: dict, lang: str) -> dict:
-    """UserPromptSubmit output that hands the next request to a subagent on the offered model.
+def delegation(offer: dict, lang: str, ask: bool = True) -> dict:
+    """UserPromptSubmit output for the first message after a refused switch: the offered subagent.
 
-    The subagent gets the exact model the user asked for (``claude-opus-5``, not ``opus``, which may resolve
-    to another version); Claude Code 2.1.280 accepts full model ids there, and the alias is the fallback.
+    With ``ask`` (someone is there to answer: the desktop app, a terminal session) the main model first asks
+    whether to hand the message to a subagent on the model the user picked, or to answer it on the session's own
+    model; without it (`claude -p`, SDK apps) the message goes to the subagent at once. Either way the session
+    never leaves its model: when the subagent returns, the main model carries on. The subagent gets the exact
+    model the user asked for (``claude-opus-5``, not ``opus``, which may resolve to another version); Claude
+    Code 2.1.280 accepts full model ids there, and the alias is the fallback.
     """
     alias = offer["alias"]
     requested = str(offer.get("to_model") or "")
     exact = requested if requested.startswith("claude-") else alias
     target = _display(requested) if requested else alias
     source = _display(offer.get("from_model"))
-    # Measured live with Haiku 4.5 as the main model: a conditional "if this is the task, delegate"
-    # let it answer a short request itself, so the instruction is firm and only an explicit decline
-    # is exempt. The subagent tool is `Agent` in the desktop app and `Task` in the headless CLI
-    # (2.1.280); naming only `Agent` left the CLI with no tool to call.
-    context = (
-        f"cachekeeper: the user asked for this message to run on {target} without switching this session, "
-        f"which stays on {source} so its prompt cache stays warm. Do not answer it yourself. Delegate it now: "
+    # The subagent tool is `Agent` in the desktop app and `Task` in the headless CLI (2.1.280);
+    # naming only `Agent` left the CLI with no tool to call.
+    handover = (
         f"call the subagent tool (Agent, or Task in some Claude Code versions) with model \"{exact}\""
         + (f" (if that model id is not accepted, \"{alias}\")" if exact != alias else "") +
-        f" and a self-contained brief — the subagent does not see this "
-        f"conversation, so include the request, the goal, the relevant files and paths, the decisions made so "
-        f"far and the constraints. When it returns, relay or apply its result and continue here on {source}, "
-        f"saying in one line that {target} did this in a subagent. Only if this message explicitly declines the "
-        f"offer or only asks about the model switch itself, answer it directly instead."
+        f" and a self-contained brief — the subagent does not see this conversation, so include the request, "
+        f"the goal, the relevant files and paths, the decisions made so far and the constraints. When it returns, "
+        f"relay or apply its result and continue here on {source}, saying in one line that {target} did this in "
+        f"a subagent and this session is still on {source}."
     )
-    notice = (f"cachekeeper: 이 요청을 {target} 서브에이전트에게 맡깁니다. 메인 세션은 {source}로 유지됩니다."
-              if lang == "ko" else
-              f"cachekeeper: handing this request to a {target} subagent; this session stays on {source}.")
+    if ask:
+        # Measured live with Haiku 4.5 as the main model: a conditional "if this is the task, delegate"
+        # let it answer a short request itself, so the question is not optional either.
+        if lang == "ko":
+            question, header = f"이 요청을 {target} 서브에이전트로 실행할까요?", "모델 선택"
+            subagent = (f"{target} 서브에이전트", f"이 요청만 {target}에서 처리하고, 끝나면 {source}로 이어갑니다. "
+                                                   f"세션 캐시는 그대로입니다")
+            stay = (f"{source}로 계속", "서브에이전트 없이 지금 모델이 처리합니다")
+            notice = f"cachekeeper: 이 요청을 {target} 서브에이전트에 맡길지 먼저 묻습니다. 세션은 {source} 그대로입니다."
+        else:
+            question, header = f"Run this request in a {target} subagent?", "Model"
+            subagent = (f"{target} subagent", f"only this request runs on {target}; then this session continues on "
+                                              f"{source}, its cache intact")
+            stay = (f"Stay on {source}", "the current model answers it, no subagent")
+            notice = f"cachekeeper: asking whether to hand this request to a {target} subagent; this session stays on {source}."
+        context = (
+            f"cachekeeper: the user tried to switch this session from {source} to {target}; the switch was stopped "
+            f"so the prompt cache stays warm, and running their next request on {target} in a subagent was offered "
+            f"instead. This message is that request. Before working on it, ask the user with the AskUserQuestion "
+            f"tool (if you have none, ask in one short line and wait): the question \"{question}\", header "
+            f"\"{header}\", options \"{subagent[0]}\" ({subagent[1]}) and \"{stay[0]}\" ({stay[1]}). If they "
+            f"choose the subagent, {handover} If they choose {source}, handle the message yourself. Only if this "
+            f"message explicitly declines the offer or only asks about the model switch itself, answer it directly "
+            f"without asking."
+        )
+    else:
+        context = (
+            f"cachekeeper: the user asked for this message to run on {target} without switching this session, "
+            f"which stays on {source} so its prompt cache stays warm. Do not answer it yourself. Delegate it now: "
+            f"{handover} Only if this message explicitly declines the offer or only asks about the model switch "
+            f"itself, answer it directly instead."
+        )
+        notice = (f"cachekeeper: 이 요청을 {target} 서브에이전트에게 맡깁니다. 메인 세션은 {source}로 유지됩니다."
+                  if lang == "ko" else
+                  f"cachekeeper: handing this request to a {target} subagent; this session stays on {source}.")
     return {
         "hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context},
         "systemMessage": notice,

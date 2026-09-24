@@ -116,8 +116,10 @@ def handle(kind: str, raw: str, env: dict[str, str] | None = None, now: float | 
         return ""
     if kind == "user-prompt-submit":
         # The first ordinary message after a refused switch is the request the user meant for the
-        # other model: hand it to a subagent on that model. Slash commands (a `/model` confirming
-        # the switch, anything else) leave the offer for the next message.
+        # other model: the main model asks whether a subagent on that model should take it. Nobody
+        # answers in `claude -p` runs and SDK apps (an `sdk-` entrypoint), so there it goes to the
+        # subagent at once. Slash commands (a `/model` confirming the switch, anything else) leave
+        # the offer for the next message.
         prompt = str(event.get("prompt", ""))
         offers = read_pending(offers_path)
         offer = offers.get(session)
@@ -127,18 +129,29 @@ def handle(kind: str, raw: str, env: dict[str, str] | None = None, now: float | 
         write_pending(offers_path, offers)
         if now - float(offer.get("at", 0)) > config.offer_seconds:
             return ""
+        ask = not env.get("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk-")
         log_event(directory, {"at": round(now, 3), "event": "prompt", "session_id": session,
                               "from_model": offer.get("from_model"), "to_model": offer.get("to_model"),
-                              "decision": "delegate"})
-        return json.dumps(delegation(offer, config.lang), ensure_ascii=False)
+                              "decision": "ask" if ask else "delegate"})
+        return json.dumps(delegation(offer, config.lang, ask), ensure_ascii=False)
     return ""
+
+
+def utf8_output() -> None:
+    """Claude Code reads a hook's pipes as UTF-8. Python on Windows writes them in the ANSI code page (cp1252,
+    cp949), which cannot encode the guard's "→" or "—": the hook would fail and the switch pass unasked."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure") and str(getattr(stream, "encoding", "")).lower().replace("-", "") != "utf8":
+            stream.reconfigure(encoding="utf-8")
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     try:
-        raw = sys.stdin.read(MAX_EVENT_BYTES + 1)
-        if len(raw) > MAX_EVENT_BYTES or len(argv) != 1:
+        utf8_output()
+        data = getattr(sys.stdin, "buffer", sys.stdin).read(MAX_EVENT_BYTES + 1)   # bytes: UTF-8 whatever the code page
+        raw = data.decode("utf-8", "replace") if isinstance(data, bytes) else data
+        if len(data) > MAX_EVENT_BYTES or len(argv) != 1:
             return 0
         if argv[0] == "stop":
             event = json.loads(raw)

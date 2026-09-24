@@ -30,7 +30,7 @@ Day to day there is nothing to run. Three things happen by themselves.
 
 **When you switch models.** If `/model` or the model picker would throw away a warm cache whose rewrite counts at least $1, the switch stops and shows the amount. Then either:
 
-- send the request you meant for the other model: a subagent on that model handles it, and the session keeps its model and its cache;
+- send the request you meant for the other model. You are asked whether a subagent on that model should handle it: yes, and it does just that request, then the conversation goes on with your session's model and its warm cache; no, and your session's model answers as usual;
 - or, to switch the session anyway, type the `/model` command the message names within 120 seconds (a terminal session shows a confirmation dialog instead).
 
 **When you step away.** In a long session, 55 minutes after your last message the model gets a short ping and answers `(keep-alive)`, which keeps the cache for another hour. Which sessions, and for how long, cachekeeper works out from your own history and redoes once a day; when your history says it would not have paid off, it stays off. To turn it off yourself, add this to `~/.claude/settings.json`, inside the existing `env` block if there is one:
@@ -84,6 +84,8 @@ The three overlap, so they do not add up: a break the keep-alive bridges leaves 
 
 **I use an API key.** Unless you set `promptCacheTtl` to `1h`, your sessions use the five-minute cache: the keep-alive stays off, and the guard and the audit count at list prices. With `1h`, set `CACHEKEEPER_BASIS=api` so that they count at list prices too.
 
+**Does it work on Windows and macOS?** CI runs the tests on both, including the hooks started through `sh` the way Claude Code starts them; the author uses it on Ubuntu. On Windows it needs Git Bash (Git for Windows), which Claude Code runs plugin hooks with; without it the hooks cannot start ([details](#requirements-and-settings)).
+
 **Does it send anything anywhere?** No. It reads this machine's transcripts. Its log (`events.jsonl` in the plugin's data folder) holds model ids, token counts and decisions, no prompt text.
 
 **How do I turn one part off?** The keep-alive: `"CACHEKEEPER_KEEPALIVE": "0"`. The guard: `"CACHEKEEPER_MODE": "off"`, or `"warn"` to show the message without stopping the switch. Both go in the `env` block of `~/.claude/settings.json` ([all settings](#requirements-and-settings)).
@@ -134,34 +136,43 @@ Claude Code already knows what a switch costs: its `PreModelSwitch` hook input c
 
 ```
 cachekeeper: switching opus-5 → fable-5-1 forfeits the warm 1h cache and re-caches 452k tokens on
-fable-5-1 — about $4.52 of subscription usage (a cache write counts at the input price). Run just this
-task on fable-5-1 instead? Send the request as you meant to and a fable-5-1 subagent handles it; this
-session then continues on opus-5. To switch the session itself, type `/model claude-fable-5-1` within
-120s (picking the same model again in a model picker may not reach Claude Code).
+fable-5-1 — about $4.52 of subscription usage (a cache write counts at the input price). To run just
+this task on fable-5-1, send the request as you meant to: you will be asked whether a fable-5-1
+subagent should handle it, and this session then continues on opus-5. To switch the session itself,
+type `/model claude-fable-5-1` within 120s. If a model picker still shows fable-5-1, this session is
+still on opus-5.
 ```
 
 On the one-hour cache the amount is Claude Code's estimate on subscription usage: the write without its 2× premium. On the five-minute cache, or with `CACHEKEEPER_BASIS=api`, it is Claude Code's list-price estimate (`about $9.04 at list price`). The `$1` threshold is on the same yardstick, so on subscription usage the guard asks from about 250k tokens on Opus 5.5 and 100k on Fable 5.1 (125k and 50k at list price); `CACHEKEEPER_MIN_USD=0.5` asks as often as before 0.6.0.
 
 - In a terminal session Claude Code shows that as its confirmation dialog.
 - **In the Claude desktop app** — where the model picker and a typed `/model` both reach Claude Code as an app request — and in headless `-p` sessions there is no dialog: the switch is blocked with that text, and **typing the `/model` command it names within 120 seconds is the confirmation**. Verified in the desktop app on 2026-09-23: `/model opus` was blocked with the message; the same command 21 seconds later switched the session.
-- Don't confirm by picking the same model again in the desktop app's picker. After a blocked switch the picker can keep showing the new model while the session stays on the old one, and picking it again sends nothing. If the picker disagrees with the session, pick the session's current model to bring them back in line.
+- The desktop app's picker is not a reliable way to confirm. A switch blocked between turns can leave the picker showing the new model while the session stays on the old one, and picking it again sends nothing (seen 2026-09-23). A switch blocked mid-turn puts the picker back on the session's model (desktop app 2.2553.13 logs `record restored`), and picking the new model again then reaches Claude Code and confirms the switch: on 2026-09-24 a second pick six seconds after the refusal switched the author's session. If the picker disagrees with the session, pick the session's current model to bring them back in line.
 - Switches with a cold cache, small contexts, automatic fallbacks and resume restores pass silently: `PreModelSwitch` only fires for `/model`, the picker and SDK calls.
 - A subagent keeps the main cache: its call and result are appended to the conversation, and it builds its own cache on its own model.
 
 ### Run just this task on the other model
 
 The refusal also offers the cheaper way to get the other model's work: **send the request you meant for the other
-model as your next message, and a subagent on that model handles it** while the session stays on its model and
-its cache stays warm. A `UserPromptSubmit` hook tells the main model to delegate that one message (Agent tool
-with the exact model you asked for, e.g. `model: "claude-fable-5-1"`, falling back to the alias `fable`; a
-self-contained brief — the subagent does not see the conversation, so the main model writes it what it needs);
-later messages run normally. It works in every direction: from Fable, `/model claude-opus-5` offers an Opus 5
-subagent. Typing the `/model` command instead switches the session as before.
+model as your next message, and you are asked whether a subagent on that model should handle it.** Yes, and the
+subagent does that one request while the session stays on its model and its cache stays warm; when it returns, the
+main model relays or applies the result and the conversation goes on with the session's model. No, and the
+session's model answers it. A `UserPromptSubmit` hook puts the question to the main model (it asks with
+AskUserQuestion, in your language) together with the handover: the Agent tool with the exact model you asked for,
+e.g. `model: "claude-fable-5-1"`, falling back to the alias `fable`, and a self-contained brief — the subagent does
+not see the conversation, so the main model writes it what it needs. Later messages run normally. In `claude -p`
+runs and Agent SDK apps (an `sdk-` entrypoint), where nobody is there to answer, the request goes to the subagent
+without the question. It works in every direction: from Fable, `/model claude-opus-5` offers an Opus 5 subagent.
+Typing the `/model` command instead switches the session as before.
+
+The session itself never changes model: the main model asks, writes the brief and carries on afterwards, all on
+its own model, so going back to the main model takes no second switch and no second rebuild.
 
 Verified live on 2026-09-23 with Opus 5.5 as the main model: after a refused switch the next request went to a
 subagent on the other model (`Agent`, `model: "sonnet"`) and the answer ended with "This session is still on
 Opus". With Haiku 4.5 as the main model the instruction reached the model and was ignored three times out of
-three, so the offer is as reliable as the main model's instruction-following.
+three, so the offer is as reliable as the main model's instruction-following. The question before the handover is
+new and not yet verified live.
 
 Every switch request and every switch that happens is logged to `events.jsonl` in the plugin's data directory — model ids, token counts, the estimate and the decision; no prompt text. `cachekeeper events` summarizes it.
 
@@ -211,6 +222,7 @@ Coming back to a session after more than an hour re-caches the whole conversatio
 - When a turn ends, a `Stop` hook waits in the background (an `asyncRewake` hook: Claude Code wakes the model only if it exits with code 2). 55 minutes after the last request started, it wakes the model, which replies `(keep-alive)`: one request that reads the cache and starts its hour again. For a 300k-token Opus 5.5 conversation a ping costs about $0.07 at list price, nearly all of it the read, against $2.40 for the rebuild. On subscription usage the read counts next to nothing, and a ping counts mostly its own few hundred tokens: about $0.007 against $1.20 (the author's 15 pings each wrote 511 tokens and replied with 123, on average).
 - Only for conversations on the one-hour cache above a minimum size, and for at most so many pings in a row. By default both come from your history (below); the fixed settings are 100k tokens and 3 pings, after which the cache lasts one more hour, about 3¾ hours after you left. Your next message starts the count again.
 - It stands down when you write, when another turn ends, when the model is switched (the next request re-caches anyway), after `/compact`, and when the machine slept past the hour. `claude -p` runs and Agent SDK apps are left alone.
+- Exit 2 is the one failure that loops. Claude Code 2.1.280 wakes the model on exit code 2 and on nothing else (read in its code), so a Stop hook that exits 2 at every turn end wakes it without end ([anthropics/claude-code#96087](https://github.com/anthropics/claude-code/issues/96087) and [#96148](https://github.com/anthropics/claude-code/issues/96148), both a Python that could not open its script). cachekeeper's hooks exit 2 only to ping. Ubuntu's `sh` also exits 2 when it cannot open a script, as when the plugin is uninstalled while a session is open, so each hook command runs the launcher only when it is there; without a Python the launcher exits 0.
 
 Which numbers pay off depends on how you take breaks, and on the yardstick. `cachekeeper keepalive` replays your history (the breaks you came back from, and the time after each session's last message, where pings would only have cost) and prints the best policy: the one the default `auto` mode uses. On the author's 12.7 days:
 
@@ -263,6 +275,8 @@ Claude Code itself also helps: the status line receives the cache's expiry time,
 
 Needs Python 3.8+ (the hook stays silent and lets every switch through without one) and a Claude Code with `PreModelSwitch` hooks (and `asyncRewake` hooks for the keep-alive; 2.1.280 has both). To try a checkout: `claude --plugin-dir /path/to/cachekeeper`.
 
+It runs on Linux, macOS and Windows, and CI runs the tests on all three ([Tests](#tests)). On Windows, Claude Code runs a plugin's hook commands with Git Bash (from Git for Windows). Without Git Bash it runs them in PowerShell, where cachekeeper's hooks, which start with `sh`, cannot run: Claude Code shows a hook error and lets every switch through, and there is no keep-alive.
+
 | variable | default | effect |
 |---|---|---|
 | `CACHEKEEPER_MODE` | `ask` | `ask`, `warn` (never blocks; shows the message) or `off` |
@@ -270,7 +284,7 @@ Needs Python 3.8+ (the hook stays silent and lets every switch through without o
 | `CACHEKEEPER_MIN_USD` | `1.0` | ask only when the estimated rewrite counts at least this much, on that yardstick |
 | `CACHEKEEPER_MIN_TOKENS` | `100000` | threshold when the new model's price is unknown |
 | `CACHEKEEPER_CONFIRM_SECONDS` | `120` | how long a repeat counts as the confirmation |
-| `CACHEKEEPER_OFFER_SECONDS` | `900` | how long the next message is handed to a subagent after a refusal |
+| `CACHEKEEPER_OFFER_SECONDS` | `900` | how long after a refusal the next message still brings the subagent question |
 | `CACHEKEEPER_LANG` | from `LANG` | `ko` or `en` |
 
 Set them in the `env` block of `~/.claude/settings.json`.
@@ -282,6 +296,7 @@ Set them in the `env` block of `~/.claude/settings.json`.
 - The subscription yardstick is measured from outside and can change without notice. Its read rate is small, but the author's history read 4.2 billion tokens from the cache in 12.7 days: across the 80% interval (0-0.5% of the input price), reads make 0% to 12% of its subscription usage. That one-hour writes count at the input price, not above it, is unmeasured: if they counted at 2× like the list price, rebuilds would weigh more, and the guard and the keep-alive would save more than shown.
 - Each keep-alive ping is a short turn you can see in the conversation, and it counts toward your usage like any request.
 - The keep-alive works only while the computer is awake and the session is open: a ping is a request the session itself makes. After a sleep that outlasted the hour it stands down instead of paying for a rebuild.
+- On Windows the keep-alive skips its check that Claude Code is still running (`os.kill(pid, 0)` would terminate the process there), so after the app closes a waiting hook may run on until its hour is up and then wake nobody.
 - The guard only sees switches that Claude Code routes through `PreModelSwitch`. Effort changes invalidate the cache on most models too (not on Opus 5.5 and Fable 5.1); Claude Code asks about those itself while the cache is warm.
 
 ## Tests
@@ -289,5 +304,7 @@ Set them in the `env` block of `~/.claude/settings.json`.
 ```
 python3 -m unittest discover -s tests
 ```
+
+`tests/test_runner.py` runs the hooks and the CLI the way Claude Code does: hooks.json's own commands through the shell Claude Code uses (`/bin/sh -c` on macOS and Linux, Git Bash on Windows), the event on stdin, under the code pages Python uses for pipes on Windows (cp1252, cp949). It checks that the keep-alive exits 2 with its message, which is what makes `asyncRewake` wake the model, and that no hook exits 2 when the plugin's files are gone. CI runs every test on Ubuntu, macOS and Windows with Python 3.8 and 3.12 (3.12 only on macOS); on Windows through Git Bash, with a Windows path.
 
 MIT License.

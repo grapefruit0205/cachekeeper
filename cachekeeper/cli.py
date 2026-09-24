@@ -12,7 +12,7 @@ from pathlib import Path
 from . import __version__
 from .audit import CAUSES, run
 from .guard import language
-from .hook import data_dir
+from .hook import data_dir, utf8_output
 from .pricing import BASES, setting
 
 BASIS_NAMES = {"ko": {"subscription": "구독 사용량 기준", "api": "API 정가 기준"},
@@ -294,6 +294,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     env = dict(os.environ)
     configured = getattr(args, "basis", None) or setting(env)
+    utf8_output()   # a Korean report through a pipe on Windows would otherwise meet the ANSI code page
 
     if args.command == "compaction":
         from .compaction import run as compaction_run

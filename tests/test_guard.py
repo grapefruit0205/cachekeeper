@@ -30,9 +30,11 @@ class DecideTests(unittest.TestCase):
         # On the one-hour cache the cost is counted as subscription usage: a write at the input price.
         self.assertIn("$4.50 of subscription usage", specific["permissionDecisionReason"])
         self.assertIn("fable-5-1 subagent", specific["permissionDecisionReason"])
-        # The confirmation is a typed command with the resolved id: re-picking in the desktop
-        # app's picker sends nothing, and an alias can resolve to another version.
-        self.assertIn("`/model claude-fable-5-1` within 120s", specific["permissionDecisionReason"])
+        # The confirmation is a typed command with the resolved id: an alias can resolve to another
+        # version, and a second pick in the desktop app's picker does not always reach Claude Code.
+        self.assertIn("type `/model claude-fable-5-1` within 120s", specific["permissionDecisionReason"])
+        self.assertIn("If a model picker still shows fable-5-1, this session is still on opus-5.",
+                      specific["permissionDecisionReason"])
         self.assertEqual(pending, {"s1": {"to_model": "claude-fable-5-1", "at": 1000.0}})
 
     def test_list_prices_on_request_or_on_the_five_minute_cache(self):
@@ -94,7 +96,8 @@ class DecideTests(unittest.TestCase):
         output, _ = decide(EVENT, {}, 0.0, Config(lang="ko"))
         reason = output["hookSpecificOutput"]["permissionDecisionReason"]
         self.assertIn("서브에이전트", reason)
-        self.assertIn("120초 안에 `/model claude-fable-5-1`를 입력하세요", reason)
+        self.assertIn("120초 안에 `/model claude-fable-5-1`를 입력하세요. 모델 선택기에 fable-5-1 표시가 남아 있어도 "
+                      "세션은 opus-5 그대로입니다.", reason)
 
     def test_config_from_env(self):
         config = Config.from_env({"CACHEKEEPER_MODE": "WARN", "CACHEKEEPER_MIN_USD": "2.5", "LANG": "ko_KR.UTF-8"})
@@ -154,29 +157,57 @@ class OfferTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.env = {"CLAUDE_PLUGIN_DATA": self.directory.name, "LANG": "ko_KR.UTF-8"}
 
-    def prompt(self, text, now):
-        output = handle("user-prompt-submit", json.dumps({"session_id": "s1", "prompt": text}), self.env, now=now)
+    def prompt(self, text, now, session="s1"):
+        output = handle("user-prompt-submit", json.dumps({"session_id": session, "prompt": text}), self.env, now=now)
         return json.loads(output) if output else None
 
-    def test_the_refusal_offers_a_subagent_and_the_next_request_is_delegated(self):
+    def decisions(self):
+        path = Path(self.directory.name) / "events.jsonl"
+        return [r["decision"] for r in map(json.loads, path.read_text().splitlines()) if r["event"] == "prompt"]
+
+    def test_the_refusal_offers_a_subagent_and_the_next_request_asks_first(self):
+        self.env["CLAUDE_CODE_ENTRYPOINT"] = "claude-desktop"
         asked = json.loads(handle("pre-model-switch", json.dumps(EVENT), self.env, now=100.0))
         reason = asked["hookSpecificOutput"]["permissionDecisionReason"]
-        self.assertIn("이 작업만 fable-5-1로 하시겠습니까?", reason)
-        self.assertIn("지금 모델(opus-5)로 이어집니다", reason)
-        delegated = self.prompt("이 버그 원인을 찾아줘", 160.0)
-        context = delegated["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("이 작업만 fable-5-1로 하려면 하려던 요청을 그대로 보내세요", reason)
+        self.assertIn("서브에이전트에 맡길지 먼저 묻고, 끝나면 지금 모델(opus-5)로 이어집니다", reason)
+        offered = self.prompt("이 버그 원인을 찾아줘", 160.0)
+        context = offered["hookSpecificOutput"]["additionalContext"]
+        # The main model asks first, in the user's language; the answer picks a subagent or the session's model.
+        self.assertIn("Before working on it, ask the user with the AskUserQuestion tool", context)
+        self.assertIn('the question "이 요청을 fable-5-1 서브에이전트로 실행할까요?"', context)
+        self.assertIn('options "fable-5-1 서브에이전트"', context)
+        self.assertIn('"opus-5로 계속"', context)
         self.assertIn('(Agent, or Task in some Claude Code versions) with model "claude-fable-5-1" '
                       '(if that model id is not accepted, "fable")', context)
         self.assertIn("self-contained brief", context)
-        self.assertIn("fable-5-1 서브에이전트", delegated["systemMessage"])
+        # When the subagent returns, the conversation carries on here, on the session's own model.
+        self.assertIn("continue here on opus-5, saying in one line that fable-5-1 did this in a subagent and "
+                      "this session is still on opus-5", context)
+        self.assertIn("If they choose opus-5, handle the message yourself", context)
+        self.assertIn("fable-5-1 서브에이전트에 맡길지 먼저 묻습니다", offered["systemMessage"])
         self.assertIsNone(self.prompt("다음 질문", 170.0))  # one request only
+        self.assertEqual(self.decisions(), ["ask"])
+
+    def test_without_anyone_to_answer_the_request_goes_to_the_subagent_at_once(self):
+        # `claude -p` runs as sdk-cli, SDK apps as sdk-py or sdk-ts: no question can be answered there.
+        for entrypoint in ("sdk-cli", "sdk-py"):
+            with self.subTest(entrypoint=entrypoint):
+                self.env["CLAUDE_CODE_ENTRYPOINT"] = entrypoint
+                handle("pre-model-switch", json.dumps({**EVENT, "session_id": entrypoint}), self.env, now=100.0)
+                delegated = self.prompt("이 버그 원인을 찾아줘", 130.0, session=entrypoint)
+                context = delegated["hookSpecificOutput"]["additionalContext"]
+                self.assertIn('Delegate it now: call the subagent tool', context)
+                self.assertNotIn("AskUserQuestion", context)
+                self.assertIn("fable-5-1 서브에이전트에게 맡깁니다", delegated["systemMessage"])
+        self.assertEqual(self.decisions(), ["delegate", "delegate"])
 
     def test_from_fable_the_subagent_runs_on_the_exact_opus_asked_for(self):
         # `opus` would resolve to Opus 5.5 here; the user asked for Opus 5.
         back = {**EVENT, "from_model": "claude-fable-5-1", "to_model": "claude-opus-5", "requested_model": "claude-opus-5",
                 "estimated_cache_write_usd": 4.5}
         asked = json.loads(handle("pre-model-switch", json.dumps(back), self.env, now=100.0))
-        self.assertIn("이 작업만 opus-5로 하시겠습니까?", asked["hookSpecificOutput"]["permissionDecisionReason"])
+        self.assertIn("이 작업만 opus-5로 하려면", asked["hookSpecificOutput"]["permissionDecisionReason"])
         context = self.prompt("이 설계를 검토해줘", 130.0)["hookSpecificOutput"]["additionalContext"]
         self.assertIn('with model "claude-opus-5" (if that model id is not accepted, "opus")', context)
         self.assertIn("continue here on fable-5-1", context)
@@ -199,7 +230,7 @@ class OfferTests(unittest.TestCase):
     def test_no_offer_for_a_model_a_subagent_cannot_run(self):
         other = {**EVENT, "to_model": "deepseek-v4.1-flash", "requested_model": "deepseek-v4.1-flash"}
         asked = json.loads(handle("pre-model-switch", json.dumps(other), self.env, now=100.0))
-        self.assertNotIn("하시겠습니까", asked["hookSpecificOutput"]["permissionDecisionReason"])
+        self.assertNotIn("서브에이전트", asked["hookSpecificOutput"]["permissionDecisionReason"])
         self.assertIsNone(self.prompt("이 버그 원인을 찾아줘", 110.0))
 
 

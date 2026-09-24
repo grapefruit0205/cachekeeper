@@ -17,4 +17,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      # bash on every runner: on Windows that is Git Bash, the shell Claude Code runs plugin hooks with,
+      # so tests/test_runner.py drives hooks/run through its sh the way Claude Code does.
       - run: python -m unittest discover -s tests -v
+        shell: bash

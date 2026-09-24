@@ -1,12 +1,12 @@
 {
-  "description": "cachekeeper: before a /model or picker switch forfeits a warm prompt cache, ask with the size of the loss and offer to run just the next request in a subagent on that model; log every switch for `cachekeeper events`; keep a long session's cache warm while its user is away, on by default (CACHEKEEPER_KEEPALIVE=0 turns it off).",
+  "description": "cachekeeper: before a /model or picker switch forfeits a warm prompt cache, ask with the size of the loss, then ask whether the next request should run in a subagent on that model; log every switch for `cachekeeper events`; keep a long session's cache warm while its user is away, on by default (CACHEKEEPER_KEEPALIVE=0 turns it off).",
   "hooks": {
     "PreModelSwitch": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run\" pre-model-switch",
+            "command": "if [ -f \"${CLAUDE_PLUGIN_ROOT}/hooks/run\" ]; then sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run\" pre-model-switch; fi",
             "timeout": 10
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run\" post-model-switch",
+            "command": "if [ -f \"${CLAUDE_PLUGIN_ROOT}/hooks/run\" ]; then sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run\" post-model-switch; fi",
             "timeout": 10
           }
         ]
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run\" user-prompt-submit",
+            "command": "if [ -f \"${CLAUDE_PLUGIN_ROOT}/hooks/run\" ]; then sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run\" user-prompt-submit; fi",
             "timeout": 10
           }
         ]
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run\" stop",
+            "command": "if [ -f \"${CLAUDE_PLUGIN_ROOT}/hooks/run\" ]; then sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run\" stop; fi",
             "asyncRewake": true,
             "rewakeMessage": "cachekeeper:",
             "rewakeSummary": "cachekeeper keep-alive ping",
