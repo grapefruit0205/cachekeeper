@@ -95,6 +95,19 @@ On a subscription, cache reads count next to nothing, and a rebuild, which write
 
 The three overlap, so they do not add up: a break the keep-alive bridges leaves no rebuild for a smaller window to shrink. These are replays of one person's history, not a controlled test; `/cachekeeper:audit` shows yours.
 
+## Strengths
+
+Measured numbers come from the author's machine, replays from the author's history ([What to expect](#what-to-expect)), and comparisons from the other projects' READMEs on 2026-09-24 ([Compared with other keep-alives](#compared-with-other-keep-alives)).
+
+1. **On in every session once installed, the desktop app included.** There is nothing to arm per session. Measured in the desktop app from 2026-09-23 14:50 to 2026-09-24 17:28 KST: 26 keep-alive pings, 7 guard asks and 1 request handed to a subagent. Many other keep-alives are armed per session (cachebeat's `/cachebeat`; cache-tax's `/keepwarm`, unless set to arm at every session start), run only in interactive CLI sessions (plugin monitors such as demouo's), or need the early-access function hooks (Delitefully's claude-keepwarm, cache-tax).
+2. **Both big causes of rebuilds, not one.** On the author's 13 days, rebuilds after model switches were 11.9% of usage and rebuilds after breaks of more than an hour 11.5% (replay). A keep-alive alone addresses only the second; the guard covers the first.
+3. **A refused switch still gets the other model's answer.** Refuse the switch and send the request: it can go to a subagent on that model, while the main conversation keeps its warm cache. In the desktop app and in `-p` runs, where Claude Code shows no confirmation dialog of its own, the guard is what stops the switch.
+4. **A policy from your own breaks, on the yardstick your plan counts.** Which sessions to keep warm, and for how long, is recomputed daily from your history and priced on subscription usage. The others use fixed or hand-set times, and those that price their pings use list prices. On real up-time the edge over a fixed policy is small, though: 3 hours nets +6.2% and 24 hours +6.6% on the author's machine (replay).
+5. **It shows what it saves.** `cachekeeper audit` replays your history. On the author's, the keep-alive nets +6.6% of usage with real up-time, and the switches the guard would have asked about carried rebuilds worth 8.2% of usage (replay). It also names the cause of every rebuild.
+6. **Its safety is checked in CI.** A hook exits 2, the code that wakes the model, only to ping, so a broken install cannot wake it in a loop ([Keep-alive](#keep-alive)). CI runs the hooks on Linux and macOS, and on Windows in Git Bash, PowerShell 7 and Windows PowerShell 5.1.
+
+Its weak points are under [Limits](#limits).
+
 ## Q&A
 
 **Does it ping my old sessions?** No. A session is pinged only after a turn ends in it while cachekeeper is running, so after you restart the app, only the sessions you have used since. Each session also stops at its cap (on the author's history, 24 hours after your last message in it), and at once when the app closes or the computer sleeps past the hour.
@@ -368,6 +381,7 @@ Set them in the `env` block of `~/.claude/settings.json`.
 - Each keep-alive ping is a short turn you can see in the conversation, and it counts toward your usage like any request.
 - The keep-alive works only while the computer is awake and the session is open: a ping is a request the session itself makes. After a sleep that outlasted the hour it stands down instead of paying for a rebuild.
 - The guard only sees switches that Claude Code routes through `PreModelSwitch`. Effort changes invalidate the cache on most models too (not on Opus 5.5 and Fable 5.1); Claude Code asks about those itself while the cache is warm.
+- The numbers in this README come from one author's history on one Linux machine. Windows is tested in CI only, not yet on a real Windows machine running Claude Code.
 
 ## Tests
 

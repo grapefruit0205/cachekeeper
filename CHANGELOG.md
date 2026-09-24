@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0 — 2026-09-24
+
+- First stable release; the plugin behaves as in 0.10.0.
+- READMEs: a Strengths section, each point marked as measured (on the author's machine), replayed (from the author's
+  history) or compared (from the other projects' READMEs), with the edge of a history-based policy over a fixed one
+  stated as small; and a limit on how far the evidence reaches (one author's Linux machine; Windows in CI only).
+
 ## 0.10.0 — 2026-09-24
 
 - `cachekeeper statusline`, for Claude Code's `statusLine` setting in the terminal: the cache's time left from the
