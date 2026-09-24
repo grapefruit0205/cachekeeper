@@ -64,6 +64,8 @@ def as_claude_code_runs(shell: str, command: str, root: Path) -> str:
     return command.replace("${CLAUDE_PLUGIN_ROOT}", "${env:CLAUDE_PLUGIN_ROOT}" if shell in POWERSHELLS else str(root))
 
 CODE_PAGES = ("utf-8", "cp1252", "cp949")
+COLD = {"session_id": "s1", "prompt_cache": {"warm": False, "caching_observed": True, "ttl": "1h", "expires_at": None,
+                                             "recache_tokens_if_cold": 312_000}}
 EVENT = {
     "session_id": "s1", "hook_event_name": "PreModelSwitch", "from_model": "claude-opus-5-5",
     "to_model": "claude-fable-5-1", "requested_model": "fable", "source": "sdk", "context_tokens": 338_385,
@@ -116,6 +118,12 @@ class RunnerTests(unittest.TestCase):
                 self.assertEqual(code, 0)
                 self.assertIn("cachekeeper 감사 — 최근 30일", out)
 
+    def test_the_status_line_prints_korean_whatever_the_code_page(self):
+        for code_page in CODE_PAGES:
+            with self.subTest(code_page=code_page):
+                code, out = self.run_script("bin/cachekeeper", ["statusline"], code_page, json.dumps(COLD).encode())
+                self.assertEqual((code, out.strip()), (0, "캐시 식음 · 다음 요청에 312k 다시 씀"))
+
 
 @unittest.skipIf(not POWERSHELLS, "no PowerShell (Claude Code on Windows without Git Bash runs commands in it)")
 class PowerShellCliTests(unittest.TestCase):
@@ -136,6 +144,24 @@ class PowerShellCliTests(unittest.TestCase):
                                             cwd=directory, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
                     self.assertEqual((result.returncode, result.stderr.decode("utf-8", "replace")), (0, ""))
                     self.assertIn("cachekeeper 감사 — 최근 30일", result.stdout.decode("utf-8"))
+
+    def test_the_status_line_reads_its_stdin_through_the_readmes_command(self):
+        # The README's command for Windows without Git Bash: `powershell -NoProfile -ExecutionPolicy Bypass -File
+        # C:/Users/<you>/.claude/plugins/marketplaces/cachekeeper/bin/cachekeeper.ps1 statusline`.
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, directory, True)
+        base = {key: value for key, value in os.environ.items()
+                if not key.startswith(("CACHEKEEPER_", "CLAUDE_", "PYTHONIOENCODING", "PYTHONUTF8"))}
+        for shell, argv in POWERSHELLS.items():
+            for code_page in CODE_PAGES:
+                with self.subTest(shell=shell, code_page=code_page):
+                    result = subprocess.run(
+                        [argv[0], "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                         (ROOT / "bin" / "cachekeeper.ps1").as_posix(), "statusline"],
+                        input=json.dumps(COLD).encode(), cwd=directory, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        env={**base, "PYTHONIOENCODING": code_page, "CACHEKEEPER_LANG": "ko"}, timeout=120)
+                    self.assertEqual((result.returncode, result.stderr.decode("utf-8", "replace")), (0, ""))
+                    self.assertEqual(result.stdout.decode("utf-8").strip(), "캐시 식음 · 다음 요청에 312k 다시 씀")
 
 
 def stamp(seconds_ago: float) -> str:

@@ -104,6 +104,7 @@ Git Bash가 없으면 PowerShell 7(`pwsh`)이 설치되어 있으면 그것으�
     }
   }
   ```
+- 터미널에서는 상태 표시줄에 캐시 남은 시간과 다음 핑까지 남은 시간을 띄울 수 있습니다 ([설정 방법](#터미널-상태-표시줄)).
 
 ### 3. 절감률 확인 및 사용량 분석
 세션 내부에서 `/cachekeeper:audit`을 입력하거나, Claude에게 아래 명령을 실행하도록 요청하세요 (플러그인이 `cachekeeper` CLI를 PATH에 등록합니다).
@@ -398,6 +399,38 @@ cachekeeper compaction
 ### 실측 결과 및 확인
 2026-09-23 데스크톱 앱 실측 결과: 5.7만 토큰 Opus 5.5 세션에서 55분, 110분 시점의 핑이 정상적으로 캐시를 읽었으며($0.014 소모), 112분 후 사용자가 보낸 요청은 $0.46 재구축 비용 대신 **$0.015**로 신속하게 처리되었습니다. 전체 이력은 `cachekeeper events`로 확인할 수 있습니다.
 
+### 터미널 상태 표시줄
+
+터미널에서는 `cachekeeper statusline`이 Claude Code 상태 표시줄에 캐시 남은 시간과 다음 핑을 보여 줍니다.
+
+```
+캐시 312k · 36분 남음 · 다음 핑 31분 후 (1/26)
+```
+
+- `312k`는 캐시가 식으면 다음 요청이 다시 쓸 크기이고, `(1/26)`은 마지막 메시지 이후 현재 정책이 허용하는 26번 가운데 첫 번째 핑이라는 뜻입니다.
+- 그 밖의 표시: `곧 핑`, `핑 한도 (26/26)`, `핑 안 함 (100k 미만)`, `keep-alive 꺼짐`, `(5분 캐시)` (Keep-Alive는 1시간 캐시만 유지), `캐시 식음 · 다음 요청에 312k 다시 씀`.
+- 언어는 `CACHEKEEPER_LANG`이나 `LANG`을 따릅니다.
+
+플러그인은 상태 표시줄을 설정할 수 없으므로 `~/.claude/settings.json`에 직접 추가합니다. 경로는 마켓플레이스에 있는 플러그인 사본이라 버전이 바뀌어도 그대로입니다.
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/plugins/marketplaces/cachekeeper/bin/cachekeeper statusline",
+    "refreshInterval": 30
+  }
+}
+```
+
+- **`refreshInterval`**: 30초마다 다시 실행해 자리를 비운 동안에도 남은 분이 줄어듭니다. 없으면 이벤트가 있을 때와 캐시가 만료될 때만 갱신됩니다.
+- **Windows**: Git Bash가 있으면 위 명령 그대로 동작합니다. 없으면 `"command": "powershell -NoProfile -ExecutionPolicy Bypass -File C:/Users/<이름>/.claude/plugins/marketplaces/cachekeeper/bin/cachekeeper.ps1 statusline"` (경로 구분자는 `/`).
+- **이미 상태 표시줄을 쓰고 있다면**: 쓰던 스크립트에서 이 명령을 불러 한 줄로 이어 붙입니다. 예: `echo "$(기존 내용) · $(printf '%s' "$input" | ~/.claude/plugins/marketplaces/cachekeeper/bin/cachekeeper statusline)"`
+- 대화 기록의 끝부분과 플러그인 자체 파일만 읽고, 아무것도 쓰거나 보내지 않습니다. 12MB 기록에서 약 0.1초 걸립니다(실측). 상태 표시줄에 캐시 상태를 넘겨 주는 Claude Code 2.1.251 이상이 필요합니다.
+
+> [!NOTE]
+> 데스크톱 앱은 상태 표시줄 명령을 실행하지 않습니다. 2026-09-24 실측(Claude Code 2.1.280)에서 `refreshInterval` 5초로 1분 44초 동안 한 번도 실행되지 않았고, 코드상으로도 상태 표시줄은 터미널 화면에만 있습니다. 그래서 터미널 전용입니다.
+
 ---
 
 ### 다른 Keep-Alive 도구와의 비교
@@ -427,7 +460,7 @@ cachekeeper compaction
 
 핑 대신 다른 길을 택한 도구도 있습니다. [navaro1/warmfold](https://github.com/navaro1/warmfold)와 [intenex/claude-idle-compactor](https://github.com/intenex/claude-idle-compactor)는 캐시가 만료되기 전에 쉬고 있는 세션을 압축해, 돌아왔을 때 대화 전체 대신 요약만 다시 쓰게 합니다. [ruodou233/claude-cache-keepalive](https://github.com/ruodou233/claude-cache-keepalive)는 스킬과 설계 문서로, 에이전트가 먼저 환경을 재 본 뒤 핑을 설정합니다 (구독에서는 55분 간격, 휴식당 최대 2번).
 
-*(cachekeeper가 하지 않는 것: 핑 메시지 숨기기, 상태 표시줄 카운트다운 위젯, 캐시가 식은 뒤 보낸 메시지 막기, 만료 전 자동 압축, OS 강제 절전 방지, 5분 캐시 살리기)*
+*(cachekeeper가 하지 않는 것: 핑 메시지 숨기기, 데스크톱 앱에서의 카운트다운 표시(데스크톱 앱은 상태 표시줄을 실행하지 않음), 캐시가 식은 뒤 보낸 메시지 막기, 만료 전 자동 압축, OS 강제 절전 방지, 5분 캐시 살리기)*
 
 ---
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.10.0 — 2026-09-24
+
+- `cachekeeper statusline`, for Claude Code's `statusLine` setting in the terminal: the cache's time left from the
+  `prompt_cache` Claude Code passes to status lines (2.1.251 and later) and the keep-alive's next ping, from its own
+  plan (`keepalive.plan`) for this moment, e.g. `cache 312k · 36m left · next ping in 31m (1/26)`, in Korean or
+  English. Auto mode's stored policy is read, never recomputed (`policy_for(..., recompute=False)`), so it stays near
+  0.1 s on a 12 MB transcript; it writes nothing, and any failure leaves the line empty. A plugin cannot set the main
+  status line, so the READMEs give the `settings.json` entry, with the marketplace copy's stable path, and a Windows
+  command for PowerShell without Git Bash. The desktop app runs no status line command (measured: none ran in
+  1 min 44 s with a 5-second `refreshInterval`), so this is for the terminal only.
+- Tests run the command through `bin/cachekeeper` in every code page and, on Windows, through the README's
+  `powershell -File` command in pwsh and Windows PowerShell 5.1, with the session's JSON on stdin.
+- READMEs: the audit's job is to show what the keep-alive and the guard save; cachekeeper's own row and five more
+  keep-alives in the comparison; the `/model` confirmation Claude Code shows by itself at the terminal.
+
 ## 0.9.0 — 2026-09-24
 
 - Windows without Git Bash: Claude Code runs a plugin's hooks in PowerShell there, and cachekeeper's now run in it

@@ -90,15 +90,19 @@ def mode(env: dict[str, str]) -> str:
     return "fixed" if value in ("1", "on", "true", "yes") else "auto"
 
 
-def policy_for(env: dict[str, str], directory: Path, now: float) -> Policy | None:
-    """The policy to wait under, or None when the keep-alive is off (by setting or by auto mode's verdict)."""
+def policy_for(env: dict[str, str], directory: Path, now: float, recompute: bool = True) -> Policy | None:
+    """The policy to wait under, or None when the keep-alive is off (by setting or by auto mode's verdict).
+    ``recompute=False`` reads auto mode's stored verdict and never replays the history, for the status line."""
     current = mode(env)
     if current == "off":
         return None
     policy = Policy.from_env(env)
     if current == "fixed":
         return policy
-    decision = autopolicy.current(directory, env, now)
+    if recompute:
+        decision = autopolicy.current(directory, env, now)
+    else:
+        decision = autopolicy.read_decision(directory) or autopolicy.DEFAULT
     if decision.get("source") == "off":
         return None
     return Policy(interval=policy.interval,

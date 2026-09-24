@@ -1,4 +1,4 @@
-"""``cachekeeper audit``, ``keepalive``, ``compaction`` and ``events``."""
+"""``cachekeeper audit``, ``keepalive``, ``compaction``, ``events`` and ``statusline``."""
 
 from __future__ import annotations
 
@@ -265,6 +265,18 @@ def events_dir() -> Path:
     return data_dir()
 
 
+def statusline(env: dict[str, str], lang: str) -> int:
+    """Claude Code's status line: the session's JSON on stdin, one line out. A status line that fails shows
+    nothing, so a failure prints nothing to stdout and the reason to stderr (``claude --debug`` logs it)."""
+    from .statusline import line
+    try:
+        event = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace") or "{}")
+        print(line(event if isinstance(event, dict) else {}, env, events_dir(), lang))
+    except Exception as error:   # never a traceback in the status bar
+        print(f"cachekeeper statusline: {error!r}", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="cachekeeper", description=__doc__)
     parser.add_argument("--version", action="version", version=f"cachekeeper {__version__}")
@@ -291,10 +303,16 @@ def main(argv: list[str] | None = None) -> int:
     keep.add_argument("--projects", type=Path, default=Path.home() / ".claude" / "projects")
     keep.add_argument("--lang", choices=("ko", "en"))
     keep.add_argument("--basis", choices=BASES, help=basis_help)
+    status = commands.add_parser("statusline", help="for Claude Code's statusLine setting (terminal only): cache time "
+                                                     "left and the next keep-alive ping")
+    status.add_argument("--lang", choices=("ko", "en"))
     args = parser.parse_args(argv)
     env = dict(os.environ)
     configured = getattr(args, "basis", None) or setting(env)
     utf8_output()   # a Korean report through a pipe on Windows would otherwise meet the ANSI code page
+
+    if args.command == "statusline":
+        return statusline(env, args.lang or language(env))
 
     if args.command == "compaction":
         from .compaction import run as compaction_run

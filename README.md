@@ -79,6 +79,8 @@ Day to day there is nothing to run. Three things happen by themselves.
 
 `--days N` sets the period (30 days by default), `--lang ko` or `--lang en` the language, and `--basis subscription` or `--basis api` the [yardstick](#two-yardsticks); `audit --json` prints the numbers as JSON. The commands read only this machine's transcripts and send nothing. Outside Claude Code, run them from a checkout: `git clone https://github.com/grapefruit0205/cachekeeper`, then `cachekeeper/bin/cachekeeper audit`.
 
+In the terminal, the status line can also count down the cache's hour and the next ping: [set it up](#in-the-terminals-status-line).
+
 ## What to expect
 
 On a subscription, cache reads count next to nothing, and a rebuild, which writes the whole conversation again, is the costliest thing a turn can do. On the author's 13 days of history (2026-09-11 to 09-24, 178 sessions, counted on subscription usage), rebuilds after model switches were 11.9% of usage and rebuilds after breaks of more than an hour 11.5%. Replaying that history:
@@ -282,6 +284,34 @@ Measured live in the desktop app ([details](docs/measurement-2026-09-23.md#keep-
 
 `cachekeeper events` lists the pings and why each wait stood down.
 
+### In the terminal's status line
+
+In the terminal, `cachekeeper statusline` fills Claude Code's status line with the cache's time left and the next ping:
+
+```
+cache 312k · 36m left · next ping in 31m (1/26)
+```
+
+`312k` is what the next request would write again if the cache went cold; `(1/26)` says the next ping is the first of the 26 the current policy allows after your last message. It can also say `ping due`, `ping cap (26/26)`, `no ping (under 100k)`, `keep-alive off`, `(5-min cache)` (the keep-alive only keeps the one-hour cache) and `cache cold · next request rewrites 312k`. It speaks Korean with `CACHEKEEPER_LANG=ko` or a Korean `LANG`.
+
+A plugin cannot set the status line, so add this to `~/.claude/settings.json` yourself. The path is the marketplace's copy of the plugin, which stays in place across versions:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/plugins/marketplaces/cachekeeper/bin/cachekeeper statusline",
+    "refreshInterval": 30
+  }
+}
+```
+
+- `refreshInterval` re-runs it every 30 seconds, so the minutes count down while you are away; without it Claude Code refreshes the line only after events and when the cache expires.
+- On Windows the command above works where Git Bash is installed. Without Git Bash: `"command": "powershell -NoProfile -ExecutionPolicy Bypass -File C:/Users/<you>/.claude/plugins/marketplaces/cachekeeper/bin/cachekeeper.ps1 statusline"`, with forward slashes.
+- If you already have a status line, have your script call this one and join the two, for example `echo "$(your part) · $(printf '%s' "$input" | ~/.claude/plugins/marketplaces/cachekeeper/bin/cachekeeper statusline)"`.
+- It reads the end of the transcript and the plugin's own files, and writes and sends nothing: about 0.1 s on a 12 MB transcript (measured). It needs Claude Code 2.1.251 or later, which passes the cache's state to status lines.
+- The desktop app runs no status line command: none ran in 1 minute 44 seconds with a 5-second `refreshInterval` (measured 2026-09-24, Claude Code 2.1.280), and in Claude Code's code the status line belongs to the terminal interface. So this is for the terminal only.
+
 ### Compared with other keep-alives
 
 Other projects keep the cache warm too. cachekeeper first, then the others as their READMEs describe them on 2026-09-24:
@@ -306,7 +336,7 @@ Other projects keep the cache warm too. cachekeeper first, then the others as th
 
 [navaro1/warmfold](https://github.com/navaro1/warmfold) and [intenex/claude-idle-compactor](https://github.com/intenex/claude-idle-compactor) take the other road: they compact an idle session before its cache expires, so coming back rewrites a summary instead of the whole conversation. [ruodou233/claude-cache-keepalive](https://github.com/ruodou233/claude-cache-keepalive) is a skill and a spec: the agent measures your setup first, then sets up pings (on a subscription, 55 minutes apart, at most 2 per break).
 
-What cachekeeper does not do: hide the ping rows (keepwarm-quiet does), show a countdown in a status line or dashboard (FiredMosquito831's claude-cache-warm and cache-tax do), stop a message that would rewrite a cold cache (cache-tax and warmfold do), compact an idle session before it goes cold (warmfold and claude-idle-compactor do), keep the computer awake (santiquiroz's timers do), or keep the five-minute cache warm (yujiachen-y's, xinnyu's and meetvaghani12's do).
+What cachekeeper does not do: hide the ping rows (keepwarm-quiet does), show a countdown in the desktop app, which runs no status line (FiredMosquito831's claude-cache-warm has a dashboard and a tray app), stop a message that would rewrite a cold cache (cache-tax and warmfold do), compact an idle session before it goes cold (warmfold and claude-idle-compactor do), keep the computer awake (santiquiroz's timers do), or keep the five-minute cache warm (yujiachen-y's, xinnyu's and meetvaghani12's do).
 
 Claude Code itself also helps: the status line receives the cache's expiry time, `/usage` shows the hit ratio and the likely cause of the last miss, and resuming a large session after a long break offers to resume from a summary.
 
