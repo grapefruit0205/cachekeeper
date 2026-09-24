@@ -261,7 +261,7 @@ opus-5 그대로입니다.
 ```
 
 ### 환경별 동작 방식
-- **터미널 세션**: Claude Code가 위 안내 문구와 함께 확인 대화상자(Modal)를 띄웁니다.
+- **터미널 세션**: Claude Code가 위 안내 문구와 함께 확인 대화상자(Modal)를 띄웁니다. 터미널에서는 캐시가 살아 있으면 Claude Code도 원래 `/model` 전환 전에 확인을 묻습니다([공식 문서](https://code.claude.com/docs/en/prompt-caching#switching-models)). `PreModelSwitch` Hook의 `ask`는 그 대화상자를 띄우는 것이고, cachekeeper는 여기에 금액과 대안을 담습니다.
 - **Claude 데스크톱 앱 및 Headless (`-p`) 세션**: 확인 창이 지원되지 않습니다. 전환 시도가 위 문구와 함께 차단되며, **안내문에 명시된 `/model <모델명>` 명령어를 120초 안에 직접 입력하면 확인으로 인정되어 전환됩니다.** (2026-09-23 데스크톱 앱 검증 완료)
 
 > [!WARNING]
@@ -389,8 +389,11 @@ cachekeeper compaction
 
 ### 다른 Keep-Alive 도구와의 비교
 
+첫 줄은 cachekeeper이고, 나머지는 2026-09-24 기준 각 README에 적힌 내용입니다.
+
 | 프로젝트 | 핑 구현 방식 | 실행 시점 및 한도 | 계산 기준 |
 |---|---|---|---|
+| **cachekeeper** | 플러그인에 들어 있는 `asyncRewake` `Stop` Hook. 데스크톱 앱에서 실측, Linux·macOS·Windows는 CI로 테스트 | 마지막 요청 55분 후. 최소 크기와 마지막 메시지 뒤 한도를 내 기록으로 매일 다시 정함 (고정 설정: 10만 토큰, 3시간) | 구독 사용량 (`CACHEKEEPER_BASIS=api`면 API 정가) |
 | **[Delitefully/claude-keepwarm](https://github.com/Delitefully/claude-keepwarm)** | Function hooks 모듈 (`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` 필요) 또는 백그라운드 모니터 | 45분 미입력 시, 최대 8회 (약 8시간), 2만 토큰 이상 | API 정가 |
 | **[FiredMosquito831/claude-cache-warm](https://github.com/FiredMosquito831/claude-cache-warm)** | 플러그인 모니터 (CLI 대화형 전용). 비대화형은 `CronCreate` 예약 작업 | 서브에이전트/백그라운드 명령 실행 중 위주. 50분 주기, 최대 3시간, 2만 토큰 이상 | API 정가 |
 | **[santiquiroz/claude-prompt-cache-keepalive](https://github.com/santiquiroz/claude-prompt-cache-keepalive)** | OS 절전 방지 잠금 + 타이머 사다리 ("afk" 입력 시 구동) | 사용자가 설정한 사다리 시간만큼 | API 정가 |
@@ -399,12 +402,19 @@ cachekeeper compaction
 | **[yujiachen-y/claude-code-cache-keepalive](https://github.com/yujiachen-y/claude-code-cache-keepalive)** | `Stop` hook 4분 대기 후 턴 강제 연장 | 5분 캐시용: 최대 7회 (약 28분) | API 키 과금 (구독 시 사용 금지 안내) |
 | **[demouo/claude-code-cache-keepalive](https://github.com/demouo/claude-code-cache-keepalive)** | 플러그인 모니터(Monitor 도구)가 `Stop` Hook이 남긴 시각을 감시 (CLI 대화형 세션 전용) | 50분 미입력 시, 미입력 12시간까지 | API 정가 |
 | **[159753a52/claude-cache-keepalive](https://github.com/159753a52/claude-cache-keepalive)** | Node.js `asyncRewake` `Stop` hook (settings.json에 직접 추가) | 턴 종료 50분 후, 최대 3회, 5만 토큰 이상, claude.ai 구독만 | - |
+| **[ARahim3/cachebeat](https://github.com/ARahim3/cachebeat)** | `/cachebeat`가 백그라운드 셸 작업을 띄우고, 50분 미입력 시 작업이 끝나며 Claude를 깨움. Claude가 작업을 다시 띄움 | 50분 미입력 시, 켠 뒤 8시간까지 (기본값). 1시간 캐시 전용 | - |
+| **[karanb192/cache-tax](https://github.com/karanb192/cache-tax)** | Function hooks 모듈(`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` 필요)이 도구 없는 세션 복제본(fork)을 보냄. 캐시가 식은 뒤 보낸 메시지를 한 번 막고 재작성 비용을 보여 줌. 상태 표시줄 | `/keepwarm`으로 켠 시간 동안(기본 6시간, 또는 세션마다 자동) 50분 미입력 시. 캐시가 식어 다시 쓴 뒤 최소 3시간 | API 정가 |
+| **[bpeers01/tkr-releases](https://github.com/bpeers01/tkr-releases)** | 바이너리로 배포되는 토큰 절약 도구 모음 안의 `asyncRewake` 감시 Hook. v5.31부터 큰 캐시를 다시 쓰게 되는 모델 전환 전에 경고 | 설정한 미입력 시간 후, 1시간 캐시에서. 작은 컨텍스트는 건너뜀 | - |
+| **[luoxiaoxin123/cc-keepalive-desktop](https://github.com/luoxiaoxin123/cc-keepalive-desktop)** | 프로젝트 폴더별 `HTTPS_PROXY`로 거는 로컬 프록시가 세션 요청을 `max_tokens=1`로 다시 보냄. Windows 전용, 데스크톱 앱용 | 켠 세션에서 50분마다(최대 58분). 58분 넘게 미입력 시 중단 | - |
 
 > [!IMPORTANT]
 > **복제(Fork) 세션 방식의 한계 (Delitefully 실측)**:  
 > 기존 세션에 `claude --resume <id> --fork-session -p`를 실행한 결과, 시스템 프롬프트에 세션 고유 식별자가 포함되어 **기존 캐시 읽기 0회, 54,300 신규 토큰 작성**이 발생했습니다. 즉, 복제 세션은 원본 세션의 캐시를 데우지 못합니다.
+> 단, cache-tax처럼 Claude Code가 실행 중인 세션의 기록으로 만드는 복제본은 다릅니다. cache-tax는 한 번 잰 복귀에서 캐시 157k 토큰을 읽었습니다.
 
-*(cachekeeper가 하지 않는 것: 핑 메시지 숨기기, 상태 표시줄 카운트다운 위젯, OS 강제 절전 방지, 5분 캐시 살리기)*
+핑 대신 다른 길을 택한 도구도 있습니다. [navaro1/warmfold](https://github.com/navaro1/warmfold)와 [intenex/claude-idle-compactor](https://github.com/intenex/claude-idle-compactor)는 캐시가 만료되기 전에 쉬고 있는 세션을 압축해, 돌아왔을 때 대화 전체 대신 요약만 다시 쓰게 합니다. [ruodou233/claude-cache-keepalive](https://github.com/ruodou233/claude-cache-keepalive)는 스킬과 설계 문서로, 에이전트가 먼저 환경을 재 본 뒤 핑을 설정합니다 (구독에서는 55분 간격, 휴식당 최대 2번).
+
+*(cachekeeper가 하지 않는 것: 핑 메시지 숨기기, 상태 표시줄 카운트다운 위젯, 캐시가 식은 뒤 보낸 메시지 막기, 만료 전 자동 압축, OS 강제 절전 방지, 5분 캐시 살리기)*
 
 ---
 
