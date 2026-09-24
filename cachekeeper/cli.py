@@ -223,15 +223,17 @@ def keepalive_report(projects: Path, days: int, lang: str, directory: Path | Non
                      f"Fewer than {MIN_STRETCHES} idle stretches: this pick rests on chance. Auto mode uses the defaults "
                      f"(100k, 3 h) until there are more.")
     elif best["net"] <= 0:
-        lines.append("이 기록에서는 keep-alive가 이득이 아니었습니다. 끈 채로 두세요." if ko else
-                     "On this history a keep-alive would not have paid off: leave it off.")
+        lines.append("이 기록에서는 keep-alive가 이득이 아니었습니다. auto 모드(기본값)는 꺼 둡니다." if ko else
+                     "On this history a keep-alive would not have paid off: auto mode, the default, leaves it off.")
         return "\n".join(lines)
-    lines += ["", ("켜는 법 (~/.claude/settings.json의 \"env\"):" if ko else "To turn it on (\"env\" in ~/.claude/settings.json):"),
-              ('  "CACHEKEEPER_KEEPALIVE": "auto"   — 하루 한 번 최근 기록으로 이 계산을 다시 해서 적용' if ko else
-               '  "CACHEKEEPER_KEEPALIVE": "auto"   — redo this every day on recent history and apply the best'),
-              ('  또는 고정: ' if ko else '  or fixed: ') +
+    lines += ["", ("keep-alive는 기본으로 켜져 있습니다(auto: 하루 한 번 최근 기록으로 이 계산을 다시 해서 적용). "
+                   "바꾸려면 ~/.claude/settings.json의 \"env\"에:" if ko else
+                   "The keep-alive is on by default (auto: this replay, redone every day on recent history). "
+                   "To change that (\"env\" in ~/.claude/settings.json):"),
+              ('  이 조합으로 고정: ' if ko else '  fix this policy: ') +
               f'"CACHEKEEPER_KEEPALIVE": "1", "CACHEKEEPER_KEEPALIVE_MIN_TOKENS": "{best["min_context"]}", '
-              f'"CACHEKEEPER_KEEPALIVE_HOURS": "{best["cap_hours"]:g}"']
+              f'"CACHEKEEPER_KEEPALIVE_HOURS": "{best["cap_hours"]:g}"',
+              ('  끄기: ' if ko else '  turn it off: ') + '"CACHEKEEPER_KEEPALIVE": "0"']
     decision = read_decision(directory) if directory is not None else None
     if decision:
         when = dt.datetime.fromtimestamp(float(decision.get("computed_at", 0))).strftime("%Y-%m-%d %H:%M")

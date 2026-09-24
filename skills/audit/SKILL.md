@@ -8,7 +8,7 @@ Run `cachekeeper audit` with the Bash tool (it is on the PATH while this plugin 
 Then answer in the user's language:
 
 1. The largest cause of rebuilds and its share of all usage.
-2. The one change that reaches it: for manual model switches, pick the model at the start of a session or hand the part that needs the other model to a subagent on that model; for idle expiry, run `cachekeeper keepalive` and give its best policy with the settings line it prints (or say it would not have paid off), and `/compact` before breaks longer than that; for effort changes, set effort at the start of a session.
+2. The one change that reaches it: for manual model switches, pick the model at the start of a session or hand the part that needs the other model to a subagent on that model; for idle expiry, the keep-alive is on by default (`auto`): run `cachekeeper keepalive` and give its best policy and the one auto mode uses now (or say it would not have paid off, so auto mode leaves it off), and `/compact` before breaks longer than its cap; for effort changes, set effort at the start of a session.
 3. When requests re-send several hundred thousand tokens, also run `cachekeeper compaction` and give the window that holds up in its cautious column, how many compactions a day that means, and that it measures cost only: a compaction loses details, so `/compact` at the end of a piece of work is the first recommendation and the window the safety net.
 4. Which yardstick the report used, as its first lines say: subscription usage (how a plan's usage limits count, measured from outside: cache reads next to nothing, cache writes at the input price) or API list prices. Either way the shares are shares of usage, not a bill.
 

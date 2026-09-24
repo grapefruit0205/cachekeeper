@@ -289,14 +289,14 @@ def rebuild_cost(gap: Gap, basis: str) -> float:
 def idle_gaps(sessions: list[Session], now: float | None = None) -> list[Gap]:
     """Every idle stretch a keep-alive could have covered, and, with ``now``, the time since each last message.
 
-    Only one-hour-TTL sessions count, and not ``claude -p`` runs: the keep-alive never waits in either.
+    Only one-hour-TTL sessions count, and not ``claude -p`` runs or SDK apps: the keep-alive never waits there.
     Keep-alive pings are skipped: a stretch runs from one request of the user's to the next, and when pings
     kept the cache through it, ``idle_rebuild_tokens`` supplies the rebuild they prevented. Otherwise a policy
     replayed on a history its own pings shaped would see only short breaks that never rebuilt, and turn off.
     """
     gaps: list[Gap] = []
     for session in sessions:
-        if session.ttl_seconds < 3600 or session.entrypoint == "sdk-cli":
+        if session.ttl_seconds < 3600 or session.entrypoint.startswith("sdk-"):
             continue
         previous: Request | None = None
         pinged = False

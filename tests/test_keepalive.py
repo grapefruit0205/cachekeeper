@@ -209,8 +209,16 @@ class WaitTests(unittest.TestCase):
         [record] = self.records
         self.assertEqual((record["decision"], record["reason"], record["idle_seconds"]), ("ping", "1/3", 3300))
 
-    def test_off_by_default_and_never_in_single_shot_print_mode(self):
-        for env in ({}, {**ON, "CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}):
+    def test_on_by_default_in_auto_mode_and_off_only_when_asked(self):
+        for value, expected in (("", "auto"), ("auto", "auto"), ("Auto ", "auto"), ("1", "fixed"), ("on", "fixed"),
+                                ("0", "off"), ("off", "off"), ("false", "off"), ("no", "off")):
+            with self.subTest(value=value):
+                self.assertEqual(keepalive.mode({"CACHEKEEPER_KEEPALIVE": value}), expected)
+        self.assertEqual(keepalive.mode({}), "auto")
+
+    def test_off_when_asked_and_never_in_single_shot_print_mode(self):
+        for env in ({**ON, "CACHEKEEPER_KEEPALIVE": "0"}, {**ON, "CLAUDE_CODE_ENTRYPOINT": "sdk-cli"},
+                    {"CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}, {"CLAUDE_CODE_ENTRYPOINT": "sdk-py"}):
             with self.subTest(env=env):
                 clock = Clock(at(45))
                 self.assertEqual(self.run_wait(clock, env), (0, ""))

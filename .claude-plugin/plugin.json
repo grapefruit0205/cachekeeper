@@ -1,7 +1,7 @@
 {
   "name": "cachekeeper",
   "displayName": "cachekeeper",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Stop rewriting Claude Code's prompt cache by accident: a model-switch guard, a keep-alive tuned to your own breaks, and an audit of what each cache rebuild cost, on subscription usage or API prices.",
   "author": {
     "name": "Junseok Pak",

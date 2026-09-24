@@ -5,47 +5,88 @@
 **Stop throwing away a warm prompt cache by accident.** A Claude Code plugin with three parts:
 
 - a **model-switch guard**: before `/model` or the model picker forfeits a warm cache, it asks — with the size of the loss and the alternative that keeps the cache;
-- **`cachekeeper audit`**: reads your own transcripts and attributes every cache rebuild to its cause, so you know which habit costs you the most — `cachekeeper keepalive` finds how long a keep-alive would have paid off for you, and `cachekeeper compaction` what compacting earlier would have saved;
-- an opt-in **keep-alive**: while you are away, one short request every 55 minutes keeps a long session's cache warm, for as long as that is cheaper than the rebuild.
+- a **keep-alive**, on by default: while you are away, one short request every 55 minutes keeps a long session's cache warm, for as long as your own history says that is cheaper than the rebuild;
+- **`cachekeeper audit`**: reads your own transcripts and attributes every cache rebuild to its cause, so you know which habit costs you the most.
 
-## How to use
+## Install
 
-**1. Install.** It needs Python 3.8 or newer ([requirements](#requirements-and-settings)).
+You need Claude Code (2.1.280 has every hook cachekeeper uses) and Python 3.8 or newer. In a terminal:
 
 ```
 claude plugin marketplace add grapefruit0205/cachekeeper
 claude plugin install cachekeeper@cachekeeper
 ```
 
-To update: `claude plugin marketplace update cachekeeper`, then `claude plugin update cachekeeper@cachekeeper`, and restart Claude Code. To remove: `claude plugin uninstall cachekeeper@cachekeeper`.
+or inside Claude Code: `/plugin marketplace add grapefruit0205/cachekeeper`, then `/plugin install cachekeeper@cachekeeper`.
 
-**2. The model-switch guard needs no setup.** When `/model` or the model picker would throw away a warm cache and the rewrite counts at least $1, the switch stops and shows the amount. Then either:
+That is all: there is nothing to set. The desktop app loads the plugin into open sessions at once; restart a terminal session.
 
-- to run just this task on the other model, send the request as you meant to: a subagent on that model handles it, and the session keeps its model and its cache;
-- to switch the session anyway, type the `/model` command the message names within 120 seconds (a terminal session shows a confirmation dialog instead).
+- Update: `claude plugin marketplace update cachekeeper`, then `claude plugin update cachekeeper@cachekeeper`.
+- Remove: `claude plugin uninstall cachekeeper@cachekeeper`.
 
-**3. Turn on the keep-alive (optional).** Add this to `~/.claude/settings.json`, inside the existing `env` block if there is one:
+## How to use
+
+Day to day there is nothing to run. Three things happen by themselves.
+
+**When you switch models.** If `/model` or the model picker would throw away a warm cache whose rewrite counts at least $1, the switch stops and shows the amount. Then either:
+
+- send the request you meant for the other model: a subagent on that model handles it, and the session keeps its model and its cache;
+- or, to switch the session anyway, type the `/model` command the message names within 120 seconds (a terminal session shows a confirmation dialog instead).
+
+**When you step away.** In a long session, 55 minutes after your last message the model gets a short ping and answers `(keep-alive)`, which keeps the cache for another hour. Which sessions, and for how long, cachekeeper works out from your own history and redoes once a day; when your history says it would not have paid off, it stays off. To turn it off yourself, add this to `~/.claude/settings.json`, inside the existing `env` block if there is one:
 
 ```json
 {
   "env": {
-    "CACHEKEEPER_KEEPALIVE": "auto"
+    "CACHEKEEPER_KEEPALIVE": "0"
   }
 }
 ```
 
-After each turn in a long session, cachekeeper then keeps the cache warm while you are away. Which sessions, and for how long, it works out from your own history and redoes once a day. It runs only while the computer is awake and the session is open. `1` instead of `auto` uses fixed settings ([keep-alive](#keep-alive-opt-in)).
-
-**4. See where your usage goes.** In a session, type `/cachekeeper:audit`, or ask Claude to run one of these (the plugin puts `cachekeeper` on the PATH of Claude Code's shell):
+**When you want to know where your usage goes.** Type `/cachekeeper:audit` in a session, or ask Claude to run one of these (the plugin puts `cachekeeper` on the PATH of Claude Code's shell):
 
 | command | shows |
 |---|---|
 | `cachekeeper audit` | what your usage is made of, and the cause of every cache rebuild |
-| `cachekeeper keepalive` | which keep-alive policy pays off on your history, and the one `auto` uses now |
+| `cachekeeper keepalive` | which keep-alive policy pays off on your history, and the one in use |
 | `cachekeeper compaction` | what an earlier auto-compaction would have saved and cost |
 | `cachekeeper events` | the guard's asks and the keep-alive's pings |
 
 `--days N` sets the period (30 days by default), `--lang ko` or `--lang en` the language, and `--basis subscription` or `--basis api` the [yardstick](#two-yardsticks); `audit --json` prints the numbers as JSON. The commands read only this machine's transcripts and send nothing. Outside Claude Code, run them from a checkout: `git clone https://github.com/grapefruit0205/cachekeeper`, then `cachekeeper/bin/cachekeeper audit`.
+
+## What to expect
+
+On a subscription, cache reads count next to nothing, and a rebuild, which writes the whole conversation again, is the costliest thing a turn can do. On the author's 13 days of history (2026-09-11 to 09-24, 178 sessions, counted on subscription usage), rebuilds after model switches were 11.9% of usage and rebuilds after breaks of more than an hour 11.5%. Replaying that history:
+
+| part | on the author's history |
+|---|---|
+| keep-alive | **+6.6%** of usage with the computer's real up-time (it shuts down or sleeps most nights); +8.4% on a computer that stays on |
+| model-switch guard | it would have asked before 29 of 40 manual switches, and the rebuilds behind them were **8.2%** of usage. What you save depends on how often you hand the task to a subagent instead; one costs its own start, about 45k tokens written |
+| an earlier auto-compaction | an `autoCompactWindow` of 300k-400k tokens nets **+17%** (+10-12% with cautious assumptions); `cachekeeper compaction` gives your number |
+
+The three overlap, so they do not add up: a break the keep-alive bridges leaves no rebuild for a smaller window to shrink. These are replays of one person's history, not a controlled test; `/cachekeeper:audit` shows yours.
+
+## Q&A
+
+**Does it ping my old sessions?** No. A session is pinged only after a turn ends in it while cachekeeper is running, so after you restart the app, only the sessions you have used since. Each session also stops at its cap (on the author's history, 24 hours after your last message in it), and at once when the app closes or the computer sleeps past the hour.
+
+**I run several sessions in parallel. Which ones get pinged?** Each runs on its own clock: 55 minutes after that session's last request, up to its cap after your last message there. Typing in one session does not reset another. cachekeeper cannot tell a finished session from one you will come back to, so the cap comes from how often you did come back. On the author's history 70% of the pings went to sessions never returned to and cost 0.6% of usage; the rest prevented rebuilds worth 7.5%.
+
+**What does a ping cost?** About a cent of subscription usage: it writes a few hundred tokens, and the cache read counts next to nothing. At API list prices it also re-reads the whole conversation: about $0.07 for a 300k-token Opus 5.5 conversation, against $2.40 for the rebuild.
+
+**Will I see the pings?** Yes: a `cachekeeper keep-alive ping` notification and the reply `(keep-alive)`. Each adds a few hundred tokens to the conversation.
+
+**Why not ping every 55 minutes forever?** On the author's computer, which shuts down or sleeps at night, no cap gives the same +6.6%. On a computer that never slept it would have cost 0.4% of usage (6.5% for sessions of any size), because pings would go on for days into sessions never returned to. The cap is for computers that stay on.
+
+**Does it work while the computer sleeps or the app is closed?** No. A ping is a request the session itself makes, so the computer has to be awake and the session open. After a sleep that outlasted the hour the cache is gone, and cachekeeper stands down instead of paying for a rebuild.
+
+**Is the one hour Anthropic's rule?** Yes. Per [Claude Code's documentation](https://code.claude.com/docs/en/prompt-caching#cache-lifetime), the main conversation's cache lives one hour on a Claude subscription within its plan usage, and five minutes with an API key, usage credits or a cloud provider; every request that reads it starts the timer again. cachekeeper reads each session's actual cache lifetime from its transcript and stays off on the five-minute cache.
+
+**I use an API key.** Unless you set `promptCacheTtl` to `1h`, your sessions use the five-minute cache: the keep-alive stays off, and the guard and the audit count at list prices. With `1h`, set `CACHEKEEPER_BASIS=api` so that they count at list prices too.
+
+**Does it send anything anywhere?** No. It reads this machine's transcripts. Its log (`events.jsonl` in the plugin's data folder) holds model ids, token counts and decisions, no prompt text.
+
+**How do I turn one part off?** The keep-alive: `"CACHEKEEPER_KEEPALIVE": "0"`. The guard: `"CACHEKEEPER_MODE": "off"`, or `"warn"` to show the message without stopping the switch. Both go in the `env` block of `~/.claude/settings.json` ([all settings](#requirements-and-settings)).
 
 ## Why
 
@@ -163,29 +204,29 @@ At list prices most of that is re-reads saved. On subscription usage nearly all 
 
 That is cost only. A compaction loses what its summary leaves out, a smaller window loses it more often, and whether that costs more than a long context is a question about the work, not the bill. Compacting yourself with `/compact` when a piece of work is done — with a note of what to keep — keeps more than a compaction wherever the window happens to fall; the window is the safety net for when you don't. Claude Code's own `/config` text recommends the automatic window "for the best cost and performance"; this replay is the history-specific number to weigh against it.
 
-## Keep-alive (opt-in)
+## Keep-alive
 
-Coming back to a session after more than an hour re-caches the whole conversation. With `CACHEKEEPER_KEEPALIVE=1`, cachekeeper keeps a long session's cache warm while you are away, for as long as that is cheaper than the rebuild:
+Coming back to a session after more than an hour re-caches the whole conversation. cachekeeper keeps a long session's cache warm while you are away, for as long as that is cheaper than the rebuild:
 
 - When a turn ends, a `Stop` hook waits in the background (an `asyncRewake` hook: Claude Code wakes the model only if it exits with code 2). 55 minutes after the last request started, it wakes the model, which replies `(keep-alive)`: one request that reads the cache and starts its hour again. For a 300k-token Opus 5.5 conversation a ping costs about $0.07 at list price, nearly all of it the read, against $2.40 for the rebuild. On subscription usage the read counts next to nothing, and a ping counts mostly its own few hundred tokens: about $0.007 against $1.20 (the author's 15 pings each wrote 511 tokens and replied with 123, on average).
-- Only for conversations of at least 100k tokens on the one-hour cache, and at most 3 pings in a row; the cache then lasts one more hour, about 3¾ hours after you left. Your next message starts the count again.
-- It stands down when you write, when another turn ends, when the model is switched (the next request re-caches anyway), after `/compact`, and when the machine slept past the hour. `claude -p` runs are left alone.
+- Only for conversations on the one-hour cache above a minimum size, and for at most so many pings in a row. By default both come from your history (below); the fixed settings are 100k tokens and 3 pings, after which the cache lasts one more hour, about 3¾ hours after you left. Your next message starts the count again.
+- It stands down when you write, when another turn ends, when the model is switched (the next request re-caches anyway), after `/compact`, and when the machine slept past the hour. `claude -p` runs and Agent SDK apps are left alone.
 
-Which numbers pay off depends on how you take breaks, and on the yardstick. `cachekeeper keepalive` replays your history (the breaks you came back from, and the time after each session's last message, where pings would only have cost) and prints the best policy with the settings to paste. On the author's 12.7 days:
+Which numbers pay off depends on how you take breaks, and on the yardstick. `cachekeeper keepalive` replays your history (the breaks you came back from, and the time after each session's last message, where pings would only have cost) and prints the best policy: the one the default `auto` mode uses. On the author's 12.7 days:
 
 - on subscription usage: sessions of at least 100k tokens kept for up to 24 hours — 1,981 pings (2.5% of usage) would have prevented 40 rebuilds (11.0%), net +8.5%. Up to 3 hours: +7.0%. With reads at 0 the 24-hour cap nets +10.0%; at 0.5% of the input price, the top of the interval, +6.1%, against +6.2% for 3 hours.
 - at list prices: sessions of at least 300k tokens for up to 2 hours — 161 pings (1.5%), 20 rebuilds prevented (3.9%), net +2.4%. Up to 24 hours: −6.9%: two thirds of the pings at that cap go to sessions never returned to, and at list price each one re-reads the whole conversation.
 
-The replay assumes the computer stays awake. Pings only run while it is awake and the session is open: on a computer that sleeps at night the pings before it sleeps are spent and the morning rebuild happens anyway. On subscription usage those pings cost under a cent each, so a long cap risks little.
+The replay assumes the computer stays awake. Pings only run while it is awake and the session is open: on a computer that sleeps at night the pings before it sleeps are spent and the morning rebuild happens anyway. On subscription usage those pings cost under a cent each, so a long cap risks little. On the author's machine, which shuts down or sleeps most nights, the same replay with its real up-time (boots and suspends from the system journal; pings stop at the first shutdown or suspend) gives +6.2% for 3 hours and +6.6% for 24 hours on subscription usage: the long cap loses nothing there, and gains little. With no cap at all it gives +6.6% there, where shutting down or sleeping at night acts as the cap, but −0.4% if the computer never slept (−6.5% for sessions of any size): pings would go on for days into sessions never returned to. The cap is for computers that stay on.
 
 | variable | default | effect |
 |---|---|---|
-| `CACHEKEEPER_KEEPALIVE` | off | `1`: on, with the settings below; `auto`: on, with the best policy on your history, recomputed daily |
-| `CACHEKEEPER_KEEPALIVE_MIN_TOKENS` | `100000` | smaller conversations are left to expire |
-| `CACHEKEEPER_KEEPALIVE_HOURS` | `3` | how long to keep pinging after your last message |
+| `CACHEKEEPER_KEEPALIVE` | `auto` | `auto`: on, with the best policy on your history, recomputed daily; `1`: on, with the settings below; `0`: off |
+| `CACHEKEEPER_KEEPALIVE_MIN_TOKENS` | `100000` | with `1`: smaller conversations are left to expire |
+| `CACHEKEEPER_KEEPALIVE_HOURS` | `3` | with `1`: how long to keep pinging after your last message |
 | `CACHEKEEPER_KEEPALIVE_MINUTES` | `55` | idle minutes before each ping |
 
-With `auto`, the Stop hook redoes the `cachekeeper keepalive` replay once a day, in the background, and waits under the best policy it finds (the two settings above are then ignored; near-ties within 1% go to the policy with fewer pings). It prices the replay on subscription usage, since the keep-alive only waits in one-hour-cache sessions, unless `CACHEKEEPER_BASIS=api`; a policy computed on the other yardstick, or by 0.5 at list prices, is redone at the next turn's end. With fewer than 10 idle stretches to go on it uses the defaults; when no policy would have saved anything, or your sessions only use the five-minute cache, it stays off. Pings are left out of the replay — a three-hour break kept warm counts as the three-hour break it was, with the rebuild it avoided — so the policy does not talk itself out of the savings it makes. Claude Code deletes terminal transcripts 30 days after their last activity (desktop sessions are kept), so the idle stretches it has seen are also kept, as numbers only, in the plugin's data folder.
+With `auto`, the default, the Stop hook redoes the `cachekeeper keepalive` replay once a day, in the background, and waits under the best policy it finds (the two settings above are then ignored; near-ties within 1% go to the policy with fewer pings). It prices the replay on subscription usage, since the keep-alive only waits in one-hour-cache sessions, unless `CACHEKEEPER_BASIS=api`; a policy computed on the other yardstick, or by 0.5 at list prices, is redone at the next turn's end. With fewer than 10 idle stretches to go on it uses the defaults; when no policy would have saved anything, or your sessions only use the five-minute cache, it stays off. Pings are left out of the replay — a three-hour break kept warm counts as the three-hour break it was, with the rebuild it avoided — so the policy does not talk itself out of the savings it makes. Claude Code deletes terminal transcripts 30 days after their last activity (desktop sessions are kept), so the idle stretches it has seen are also kept, as numbers only, in the plugin's data folder.
 
 Measured live in the desktop app ([details](docs/measurement-2026-09-23.md#keep-alive-live)): pings 55 and 110 minutes after the last message each read the cache ($0.014 apiece at list price for a 57k-token Opus 5.5 session), and a message 112 minutes after the last one cost $0.015 instead of the $0.46 of writing it again.
 
@@ -209,9 +250,9 @@ Other projects keep the cache warm too. As their READMEs describe them on 2026-0
 What cachekeeper does differently:
 
 - **Claude Code's own hook.** The ping comes from an `asyncRewake` `Stop` hook: no background process, no early-access flag, no scheduled task, no fork. It goes through the live session and reads that session's cache, as measured in the desktop app above.
-- **A policy from your history.** The others use fixed defaults or a length you choose (claude-cache-warm's dashboard shows what warming would have saved on your transcripts, for you to set its cap by). `auto` replays your own breaks, picks the minimum size and the cap, and picks them again every day, counting the pings that go to sessions you never come back to.
+- **A policy from your history.** The others use fixed defaults or a length you choose (claude-cache-warm's dashboard shows what warming would have saved on your transcripts, for you to set its cap by). `auto`, the default, replays your own breaks, picks the minimum size and the cap, and picks them again every day, counting the pings that go to sessions you never come back to.
 - **Subscription usage.** Every README above that prices a ping uses list prices, where a ping reads the whole conversation at a tenth of the input price and about 20 pings on the one-hour cache cost as much as one rebuild. On subscription usage as measured from outside ([two yardsticks](#two-yardsticks)), reads count next to nothing and a ping costs about 1% of a rebuild, so a long cap risks little: on the author's history the best cap was 24 hours on subscription usage and 2 hours at list prices.
-- **It stands down by itself**: when you write, when another turn ends, on a model switch or `/compact`, once the cache has gone cold, and in `claude -p` runs. A ping never counts as you coming back.
+- **It stands down by itself**: when you write, when another turn ends, on a model switch or `/compact`, once the cache has gone cold, and in `claude -p` runs and SDK apps. A ping never counts as you coming back.
 - **Next to the guard and the audit.** On the author's history model switches cost about as much as idle expiry (12.5% and 11.8% of usage). A keep-alive only reaches the second; the guard covers the first, and the audit tells you which one costs you more.
 
 What it does not do: hide the ping rows (keepwarm-quiet does), show a countdown in a status line or dashboard (claude-cache-warm does), keep the computer awake (santiquiroz's timers do), or keep the five-minute cache warm (the last three do).

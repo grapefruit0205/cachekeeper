@@ -21,10 +21,11 @@ model with what it printed. ``wait``
   turn ends, the model is switched, the session is gone, or the machine slept
   past the hour.
 
-After ``max_pings`` pings in a row (3, about three hours) it lets the cache
-expire: on the author's history, pinging longer cost about what the rebuild it
-would save does (see ``cachekeeper keepalive``). ``plan`` holds the decision and
-is pure; ``wait`` is the loop around it.
+It is on by default in ``auto`` mode: the minimum size and ``max_pings`` come
+from this machine's history (``autopolicy``), which leaves the keep-alive off
+when no policy would have paid off. ``CACHEKEEPER_KEEPALIVE=1`` waits under the
+fixed settings instead (3 pings in a row, about three hours) and ``0`` turns it
+off. ``plan`` holds the decision and is pure; ``wait`` is the loop around it.
 """
 
 from __future__ import annotations
@@ -77,11 +78,12 @@ class Policy:
 
 
 def mode(env: dict[str, str]) -> str:
-    """``fixed`` (the CACHEKEEPER_KEEPALIVE_* settings), ``auto`` (recomputed daily from history) or ``off``."""
+    """``auto`` (the default: recomputed daily from history), ``fixed`` (the CACHEKEEPER_KEEPALIVE_* settings)
+    or ``off``."""
     value = env.get("CACHEKEEPER_KEEPALIVE", "").strip().lower()
-    if value == "auto":
-        return "auto"
-    return "fixed" if value in ("1", "on", "true", "yes") else "off"
+    if value in ("0", "off", "false", "no"):
+        return "off"
+    return "fixed" if value in ("1", "on", "true", "yes") else "auto"
 
 
 def policy_for(env: dict[str, str], directory: Path, now: float) -> Policy | None:
@@ -261,8 +263,8 @@ def message(view: View, pings: int, now: float, policy: Policy) -> str:
     idle = max(0, round((now - (view.anchor or now)) / 60))
     return (f"{MARK} {pings} of {policy.max_pings}, not an error: this session has been idle for {idle} min and "
             f"its prompt cache ({view.context / 1000:,.0f}k tokens) expires an hour after the last request. This "
-            f"turn only keeps it warm while the user is away. Reply with exactly {REPLY} and nothing else: no "
-            f"tools, no summary.")
+            f"turn only keeps it warm while the user is away (CACHEKEEPER_KEEPALIVE=0 in settings turns these "
+            f"pings off). Reply with exactly {REPLY} and nothing else: no tools, no summary.")
 
 
 def wait(event: dict, env: dict[str, str], directory: Path, *, now: Callable[[], float] = time.time,
@@ -274,8 +276,8 @@ def wait(event: dict, env: dict[str, str], directory: Path, *, now: Callable[[],
     stand-downs of small or five-minute-cache sessions, which happen at most turn ends).
     """
     err = err or sys.stderr
-    if mode(env) == "off" or env.get("CLAUDE_CODE_ENTRYPOINT") == "sdk-cli":
-        return 0                        # `claude -p` runs asyncRewake hooks in the foreground
+    if mode(env) == "off" or env.get("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk-"):
+        return 0                        # `claude -p` runs asyncRewake hooks in the foreground; SDK apps are programs
     transcript = Path(str(event.get("transcript_path") or ""))
     session = str(event.get("session_id") or "")
     if not session or not transcript.is_file():

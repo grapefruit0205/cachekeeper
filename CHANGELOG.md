@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.7.0 — 2026-09-24
+
+- The keep-alive is on by default. An unset `CACHEKEEPER_KEEPALIVE` now means `auto`: the minimum size and the cap
+  come from the local history, recomputed daily, and the keep-alive stays off when no policy would have paid off or
+  the sessions use the five-minute cache. `0` (or `off`, `false`, `no`) turns it off, and `1` keeps the fixed
+  settings. Installing the plugin is all there is to do.
+- It also stands down in Agent SDK apps (any `sdk-` entrypoint), as it did in `claude -p` runs: a program has no
+  user to come back, and the replay leaves those sessions out.
+- Each ping's text names the off switch (`CACHEKEEPER_KEEPALIVE=0`): a user who never turned the keep-alive on may
+  meet one.
+- `cachekeeper keepalive` says the keep-alive is on by default and prints the lines that fix its policy or turn it off.
+- On the author's machine, which shuts down or sleeps most nights, the keep-alive replay with the real up-time (boots
+  and suspends from the system journal; pings stop at the first shutdown or suspend) gives +6.2% of subscription
+  usage for a 3-hour cap and +6.6% for 24 hours, against +6.8% and +8.4% with the computer assumed awake: auto
+  mode's 24-hour pick loses nothing there, and gains little. With no cap: +6.6% there, −0.4% on a computer that
+  never sleeps.
+- The READMEs open with install (two commands, nothing to set), how to use, what to expect on the author's history,
+  and a Q&A: which sessions get pinged, parallel sessions, what a ping costs, why there is a cap, the one-hour cache.
+
 ## 0.6.0 — 2026-09-24
 
 - Two yardsticks. Every amount cachekeeper shows (the guard's estimate, the audit's shares, the keep-alive and
