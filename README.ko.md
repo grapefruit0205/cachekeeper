@@ -31,7 +31,7 @@
 ## 설치
 
 > [!NOTE]
-> Claude Code(v2.1.280 이상에 cachekeeper가 사용하는 모든 Hook이 포함되어 있습니다)와 Python 3.8 이상이 필요합니다. Windows에서는 Git for Windows도 필요합니다([Windows에서 사용하려면](#windows에서-사용하려면)).
+> Claude Code(v2.1.280 이상에 cachekeeper가 사용하는 모든 Hook이 포함되어 있습니다)와 Python 3.8 이상이 필요합니다([Windows에서 사용하려면](#windows에서-사용하려면)).
 
 ### 터미널에서 설치
 ```bash
@@ -55,25 +55,29 @@ claude plugin install cachekeeper@cachekeeper
 
 ### Windows에서 사용하려면
 
-Claude Code는 Windows에서 플러그인 Hook을 **Git Bash**로 실행하고, Git Bash가 없으면 PowerShell로 실행합니다. cachekeeper의 Hook은 PowerShell에서는 실행되지 않습니다. Claude 데스크톱 앱과 터미널의 Claude Code 모두 같고, 둘 다 이제는 Git 없이도 설치되므로 아래 두 가지를 직접 준비해야 합니다. 플러그인 설치 전후 어느 때 해도 됩니다.
+Claude Code는 Windows에서 플러그인 Hook을 **Git Bash**로 실행하고, Git Bash가 없으면 **PowerShell**로 실행합니다. cachekeeper의 Hook은 0.9.0부터 둘 다에서 실행됩니다. Claude 데스크톱 앱과 터미널의 Claude Code 모두 같습니다. 필요한 것은 Python입니다.
 
-1. **Git for Windows 설치**: [git-scm.com](https://git-scm.com/downloads/win)에서 받거나 `winget install --id Git.Git -e`로 설치합니다. Claude Code는 `C:\Program Files\Git`이나 PATH에 있는 `git` 옆에서 Git Bash를 자동으로 찾습니다. 다른 곳에 설치해서 찾지 못하면 `~/.claude/settings.json`에 경로를 적습니다.
-   ```json
-   {
-     "env": {
-       "CLAUDE_CODE_GIT_BASH_PATH": "C:\\Program Files\\Git\\bin\\bash.exe"
-     }
-   }
-   ```
-2. **Python 3.8 이상 설치**: [python.org](https://www.python.org/downloads/windows/)에서 설치합니다. Git Bash에서 `python3 --version`, `python --version`, `py -3 --version` 중 하나가 3.8 이상을 출력하면 됩니다. Windows에 기본으로 들어 있는 `python`은 Microsoft Store로 안내하는 바로가기일 뿐 Python이 아닙니다.
-3. **Claude 데스크톱 앱이나 터미널을 완전히 종료했다가 다시 엽니다** (데스크톱 앱은 트레이 아이콘에서도 종료). 이미 실행 중인 Claude Code는 설치 전의 환경을 그대로 쓰기 때문입니다.
-4. **확인**: 새 세션에서 `/cachekeeper:audit`를 실행합니다. 리포트가 나오면 Git Bash와 Python을 모두 찾은 것이고, Hook도 같은 둘로 실행됩니다. `Python 3.8 or newer is required`가 나오면 2번을, 명령을 아예 실행하지 못하면 1번을 다시 확인하세요. Python이 없으면 Hook은 오류 없이 조용히 꺼져 있으므로 이 확인이 필요합니다.
+1. **Python 3.8 이상 설치**: [python.org](https://www.python.org/downloads/windows/)에서 설치합니다. PowerShell에서 `python3 --version`, `python --version`, `py -3 --version` 중 하나가 3.8 이상을 출력하면 됩니다. Windows에 기본으로 들어 있는 `python`은 Microsoft Store로 안내하는 바로가기일 뿐 Python이 아닙니다.
+2. **Claude 데스크톱 앱이나 터미널을 완전히 종료했다가 다시 엽니다** (데스크톱 앱은 트레이 아이콘에서도 종료). 이미 실행 중인 Claude Code는 설치 전의 환경을 그대로 쓰기 때문입니다.
+3. **확인**: 새 세션에서 `/cachekeeper:audit`를 실행합니다. 리포트가 나오면 Python을 찾은 것이고, Hook도 같은 Python으로 실행됩니다. `Python 3.8 or newer is required`가 나오면 1번을 다시 확인하세요. Python이 없으면 Hook은 오류 없이 조용히 꺼져 있으므로 이 확인이 필요합니다.
 
-- **WSL**: WSL에서 실행하는 Claude Code(데스크톱 앱의 WSL 환경 포함)는 Linux와 같습니다. Git for Windows는 필요 없고, cachekeeper를 WSL 안의 Claude Code에 설치하면 됩니다. Python은 WSL의 Ubuntu에 기본으로 들어 있습니다.
-- 제작자는 Ubuntu에서 사용합니다. Windows는 CI(GitHub의 Windows 러너, Git Bash)에서 테스트했고, Claude Code가 설치된 실제 Windows 기기에서는 아직 확인하지 못했습니다.
+Git for Windows는 없어도 됩니다. 설치되어 있으면 Claude Code가 그 Git Bash로 Hook을 실행하며, `C:\Program Files\Git`이나 PATH에 있는 `git` 옆에서 찾습니다. 다른 곳에 설치했다면 `~/.claude/settings.json`에 경로를 적습니다.
+
+```json
+{
+  "env": {
+    "CLAUDE_CODE_GIT_BASH_PATH": "C:\\Program Files\\Git\\bin\\bash.exe"
+  }
+}
+```
+
+Git Bash가 없으면 PowerShell 7(`pwsh`)이 설치되어 있으면 그것으로, 아니면 Windows에 기본으로 들어 있는 Windows PowerShell 5.1로 실행됩니다. 이때 `/cachekeeper:audit`는 `bin/cachekeeper.ps1`을 경로로 직접 실행합니다. Claude Code는 플러그인의 `bin/`을 Bash 도구의 PATH에만 넣기 때문입니다.
+
+- **WSL**: WSL에서 실행하는 Claude Code(데스크톱 앱의 WSL 환경 포함)는 Linux와 같습니다. cachekeeper를 WSL 안의 Claude Code에 설치하면 됩니다. Python은 WSL의 Ubuntu에 기본으로 들어 있습니다.
+- 제작자는 Ubuntu에서 사용합니다. Windows는 CI(GitHub의 Windows 러너에서 Git Bash, PowerShell 7, Windows PowerShell 5.1)로 테스트했고, Claude Code가 설치된 실제 Windows 기기에서는 아직 확인하지 못했습니다.
 
 > [!NOTE]
-> MSIX 패키지로 설치된 Windows 데스크톱 앱에는, 앱이 자기 폴더(`%APPDATA%\Claude`)에 풀어 둔 플러그인 파일을 Git Bash나 Python 같은 외부 프로그램이 보지 못하는 버그가 있습니다([anthropics/claude-code#96087](https://github.com/anthropics/claude-code/issues/96087)). 마켓플레이스에서 설치한 cachekeeper는 보통 `C:\Users\<이름>\.claude\plugins`에 들어가므로 해당되지 않을 것으로 보지만, 확인하지는 못했습니다. 해당되더라도 0.8.0부터는 Hook이 파일을 찾지 못하면 조용히 끝나므로 무한 반복은 생기지 않고, 가드와 Keep-Alive가 동작하지 않을 뿐입니다.
+> MSIX 패키지로 설치된 Windows 데스크톱 앱에는, 앱이 자기 폴더(`%APPDATA%\Claude`)에 풀어 둔 플러그인 파일을 Git Bash나 Python 같은 외부 프로그램이 보지 못하는 버그가 있습니다([anthropics/claude-code#96087](https://github.com/anthropics/claude-code/issues/96087)). 마켓플레이스에서 설치한 cachekeeper는 보통 `C:\Users\<이름>\.claude\plugins`에 들어가므로 해당되지 않을 것으로 보지만, 확인하지는 못했습니다. 해당되더라도 Hook은 파일을 찾지 못하면 조용히 끝나므로(Hook은 Keep-Alive 핑일 때만 exit 2를 냅니다) 무한 반복은 생기지 않고, 가드와 Keep-Alive가 동작하지 않을 뿐입니다.
 
 ---
 
@@ -173,7 +177,7 @@ A. 네. [Claude Code 공식 문서](https://code.claude.com/docs/en/prompt-cachi
 A. `promptCacheTtl`을 `1h`로 설정하지 않았다면 5분 캐시로 동작하므로 Keep-Alive는 비활성화되며, 가드 및 감사는 API 정가 기준으로 계산됩니다. 만약 `1h`로 설정하여 사용 중이라면 `CACHEKEEPER_BASIS=api`를 환경변수에 지정해 API 정가 기준으로 계산하도록 설정하세요.
 
 **Q. Windows나 macOS에서도 동작하나요?**  
-A. 네. macOS는 Python 3.8 이상만 있으면 되고, Windows에서는 Git for Windows와 Python을 설치한 뒤 앱을 다시 시작해야 합니다([Windows에서 사용하려면](#windows에서-사용하려면)). CI가 세 운영체제 모두에서 테스트를 실행하며, 제작자는 Ubuntu에서 사용합니다.
+A. 네. 둘 다 Python 3.8 이상만 있으면 되고, Windows에서는 설치 후 앱을 다시 시작해야 합니다([Windows에서 사용하려면](#windows에서-사용하려면)). CI가 세 운영체제 모두에서 테스트를 실행하며(Windows는 Git Bash와 두 PowerShell 모두), 제작자는 Ubuntu에서 사용합니다.
 
 **Q. 대화 데이터가 외부로 전송되나요?**  
 A. 전혀 전송되지 않습니다. 로컬 PC의 대화 기록만 읽어 분석합니다. 플러그인 데이터 디렉터리의 로그 파일(`events.jsonl`)에는 모델명, 토큰 수, 결정 결과만 기록되며 프롬프트 내용은 일체 포함되지 않습니다.
@@ -358,7 +362,7 @@ cachekeeper compaction
 - 1시간 캐시를 사용하고, 일정 크기 이상인 세션에서, 정해진 횟수만큼만 핑을 보냅니다.
 - 사용자가 메시지를 입력하면 타이머 카운트가 초기화됩니다.
 - **즉시 물러나는 경우**: 사용자 입력 발생, 다른 턴 완료, 모델 변경, `/compact` 실행 후, PC 절전으로 1시간 경과, `claude -p` 및 Agent SDK 환경.
-- **무한 반복 방지**: 실패 가운데 무한 반복으로 이어지는 것은 exit 2뿐입니다. Claude Code 2.1.280은 종료 코드 2일 때만 모델을 깨우므로(코드에서 확인), 턴이 끝날 때마다 exit 2를 내는 `Stop` Hook은 모델을 끝없이 깨웁니다 ([anthropics/claude-code#96087](https://github.com/anthropics/claude-code/issues/96087), [#96148](https://github.com/anthropics/claude-code/issues/96148). 둘 다 스크립트를 열지 못한 Python의 exit 2였습니다). cachekeeper의 Hook은 핑할 때만 exit 2를 냅니다. Ubuntu의 `sh`는 스크립트를 열지 못해도 exit 2를 내므로(세션이 열린 채 플러그인을 삭제한 경우 등), 각 Hook 명령은 실행 스크립트가 있을 때만 실행합니다. Python이 없으면 실행 스크립트는 exit 0으로 끝납니다.
+- **무한 반복 방지**: 실패 가운데 무한 반복으로 이어지는 것은 exit 2뿐입니다. Claude Code 2.1.280은 종료 코드 2일 때만 모델을 깨우므로(코드에서 확인), 턴이 끝날 때마다 exit 2를 내는 `Stop` Hook은 모델을 끝없이 깨웁니다 ([anthropics/claude-code#96087](https://github.com/anthropics/claude-code/issues/96087), [#96148](https://github.com/anthropics/claude-code/issues/96148). 둘 다 스크립트를 열지 못한 Python의 exit 2였습니다). 그래서 cachekeeper의 Hook은 요청받았을 때만 exit 2를 냅니다. Keep-Alive는 핑할 때 자기만의 코드 75로 끝나고, `Stop` Hook 명령은 이 코드만 2로 바꿉니다. 그 밖의 모든 종료(파일이 사라짐, Python 없음, 오류, 스크립트를 열지 못한 셸. Ubuntu의 `sh`는 이때도 exit 2를 냅니다)는 0으로 끝나며, 모델 전환과 프롬프트 Hook은 답을 JSON으로 전달하므로 항상 0으로 끝납니다.
 
 ### 정책 최적화 시뮬레이션 (`auto` 모드)
 `cachekeeper keepalive`는 실제 복귀 패턴을 분석하여 최적의 정책을 산출합니다:
@@ -410,7 +414,7 @@ cachekeeper compaction
 - **Claude Code 2.1.280 이상** (`PreModelSwitch` 및 `asyncRewake` 지원).
 - 로컬 저장소 코드로 직접 테스트: `claude --plugin-dir /path/to/cachekeeper`
 - **Linux, macOS, Windows** 지원. CI가 세 운영체제 모두에서 테스트를 실행합니다([테스트](#테스트)).
-- **Windows에서는 Git for Windows(Git Bash)도 필요합니다.** Claude Code가 플러그인 Hook을 Git Bash로 실행하기 때문입니다. 준비 방법은 [Windows에서 사용하려면](#windows에서-사용하려면)을 보세요.
+- Windows에서는 Git Bash가 있으면 Git Bash로, 없으면 PowerShell로 실행됩니다. 준비 방법은 [Windows에서 사용하려면](#windows에서-사용하려면)을 보세요.
 
 ### 환경 변수 목록 (`~/.claude/settings.json`)
 
@@ -454,9 +458,9 @@ python3 -m unittest discover -s tests
 ```
 
 `tests/test_runner.py`는 Claude Code가 하는 그대로 Hook과 CLI를 실행합니다.
-- hooks.json의 명령을 Claude Code가 쓰는 셸(macOS와 Linux는 `/bin/sh -c`, Windows는 Git Bash)로 실행하고, 이벤트는 stdin으로 넣으며, Windows에서 Python이 파이프에 쓰는 코드페이지(cp1252, cp949)를 적용합니다.
-- Keep-Alive가 핑 메시지와 함께 exit 2로 끝나는지(`asyncRewake`가 모델을 깨우는 조건), 플러그인 파일이 없을 때 어떤 Hook도 exit 2를 내지 않는지 확인합니다.
-- CI는 모든 테스트를 Ubuntu, macOS, Windows에서 Python 3.8과 3.12로 실행합니다(macOS는 3.12만). Windows에서는 Git Bash와 Windows 경로로 실행합니다.
+- hooks.json의 명령을 Claude Code가 쓰는 각 셸(macOS와 Linux는 `/bin/sh -c`, Windows는 Git Bash, Git Bash가 없을 때의 PowerShell 7과 Windows PowerShell 5.1)로 실행하고, 이벤트는 stdin으로 넣으며, Windows에서 Python이 파이프에 쓰는 코드페이지(cp1252, cp949)를 적용합니다.
+- Keep-Alive가 핑 메시지와 함께 exit 2로 끝나는지(`asyncRewake`가 모델을 깨우는 조건), Keep-Alive 자신의 코드만 2가 되는지, 플러그인 파일이 없을 때 어떤 Hook도 exit 2를 내지 않는지 확인합니다.
+- CI는 모든 테스트를 Ubuntu, macOS, Windows에서 Python 3.8과 3.12로 실행합니다(macOS는 3.12만). Windows에서는 Git Bash(Windows 경로)와 두 PowerShell로 실행합니다.
 
 ---
 

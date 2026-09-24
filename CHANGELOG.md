@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.9.0 — 2026-09-24
+
+- Windows without Git Bash: Claude Code runs a plugin's hooks in PowerShell there, and cachekeeper's now run in it
+  (PowerShell 7 and Windows PowerShell 5.1). Each hooks.json command serves both shells: sh runs its first line and
+  exits, and PowerShell reads that line as a comment (from `` `# `` to `#>`) and runs the second, which calls the new
+  `hooks/run.ps1`. That finds Python 3.8+ as `hooks/run` does, connects it to the hook's own stdin and stdout, and
+  copies its stderr byte for byte: through PowerShell's pipeline the text would be decoded in the console code page,
+  and Windows PowerShell 5.1 would turn the keep-alive's message into error records.
+- `bin/cachekeeper.ps1` runs the CLI in PowerShell. Claude Code puts a plugin's `bin/` only on the Bash tool's PATH,
+  so the audit skill runs it by its path where PowerShell is the only shell tool.
+- Exit 2 only on request. For a ping the keep-alive now ends with its own code, 75 (`keepalive.WAKE`), and the Stop
+  hook's command turns that code, and only that, into 2. Whatever else ends a hook, 2 from a Python that cannot open
+  a file or from a shell that cannot open a script among it, ends it with 0; the model-switch and prompt hooks always
+  end with 0, since their answers are JSON. The 0.8.0 guard caught only a missing launcher.
+- `tests/test_runner.py` runs hooks.json's commands in every shell Claude Code uses: `/bin/sh` on macOS and Linux;
+  Git Bash, pwsh and Windows PowerShell 5.1 on Windows. Each run must end within the hook's own timeout, and on
+  GitHub's Windows runners the tests check that all three shells are there and log how long a hook takes in each.
+
 ## 0.8.1 — 2026-09-24
 
 - Windows: the keep-alive notices that Claude Code has closed. It skipped that check there, since `os.kill(pid, 0)`

@@ -12,7 +12,9 @@ import datetime as dt
 import json
 import os
 import shutil
+import statistics
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -174,7 +176,8 @@ class HookCommandTests(unittest.TestCase):
         # Claude Code writes the event and a newline to the hook's stdin and runs it in the session's folder.
         result = subprocess.run([*SHELLS[shell], command], input=json.dumps(event, ensure_ascii=False).encode("utf-8") + b"\n",
                                 env=env, cwd=self.directory, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
-        self.assertLess(time.monotonic() - started, 60)
+        self.seconds = time.monotonic() - started
+        self.assertLess(self.seconds, HOOKS[event_name][0]["hooks"][0]["timeout"])   # past it, Claude Code gives up
         return result.returncode, result.stdout.decode("utf-8"), result.stderr.decode("utf-8")
 
     def stop_event(self, read):
@@ -239,6 +242,21 @@ class HookCommandTests(unittest.TestCase):
                         code, out, err = self.run_hook(shell, event_name, {"session_id": "s1"}, root=fake,
                                                        FAKE_CODE=str(exit_code))
                         self.assertEqual(code, 2 if event_name == "Stop" and exit_code == WAKE else 0, err)
+
+    @unittest.skipUnless(os.name == "nt" and os.environ.get("GITHUB_ACTIONS"), "only GitHub's Windows runners")
+    def test_githubs_windows_runners_test_every_shell_and_log_how_long_a_hook_takes(self):
+        # They have Git Bash, pwsh and Windows PowerShell 5.1: none may drop out of these tests unnoticed.
+        self.assertEqual(sorted(SHELLS), ["git-bash", "powershell", "pwsh"])
+        times = {}
+        for shell in SHELLS:
+            runs = []
+            for _ in range(3):
+                self.assertEqual(self.run_hook(shell, "UserPromptSubmit", {"session_id": "s1", "prompt": "hi"}),
+                                 (0, "", ""))
+                runs.append(self.seconds)
+            times[shell] = statistics.median(runs)
+        sys.stderr.write("UserPromptSubmit, median of 3: "
+                         + ", ".join(f"{shell} {seconds:.2f} s" for shell, seconds in times.items()) + "\n")
 
     def test_the_stop_command_turns_the_keep_alives_own_code_into_2_in_both_shells(self):
         command = HOOKS["Stop"][0]["hooks"][0]["command"]
