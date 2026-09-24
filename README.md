@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/icon.png" width="160" alt="cachekeeper icon: a shield around a stack of cache layers with a refresh arrow"></p>
+
 # cachekeeper
 
 **English** · [한국어](README.ko.md)

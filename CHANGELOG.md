@@ -12,6 +12,9 @@
   1 min 44 s with a 5-second `refreshInterval`), so this is for the terminal only.
 - Tests run the command through `bin/cachekeeper` in every code page and, on Windows, through the README's
   `powershell -File` command in pwsh and Windows PowerShell 5.1, with the session's JSON on stdin.
+- The plugin's icon, at the top of both READMEs (`assets/icon.png`), and a 1280×640 version for GitHub's social
+  preview (`assets/social-preview.png`). Neither `plugin.json` nor a marketplace entry has an icon field, so Claude
+  Code's plugin list does not show it.
 - READMEs: the audit's job is to show what the keep-alive and the guard save; cachekeeper's own row and five more
   keep-alives in the comparison; the `/model` confirmation Claude Code shows by itself at the terminal.
 
