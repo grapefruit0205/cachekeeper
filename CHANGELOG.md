@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.1.0 — 2026-10-15
+
+- `/cachekeeper:keepalive-off` turns the keep-alive off for the session it is typed in, and only that one: for a
+  session handed off to a new one, or simply finished, while Claude Code and the other sessions stay open. Until now
+  `CACHEKEEPER_KEEPALIVE=0` was the only way, and it applies to every session. A `UserPromptExpansion` hook marks the
+  session's file in `keepalive/` (`"off"`) and tells the model to answer `keep-alive off (this session)` and nothing
+  else: one short turn, about the cost of a ping, since the cache is warm while the keep-alive runs. A wait already
+  running stands down at its next look, within 30 seconds, logged as `session off`; the turn's own end starts none.
+  The mark goes when the user sends that session an ordinary message (`UserPromptSubmit`, slash commands and
+  `<`-tagged notifications aside), when the session is resumed (`SessionStart` with `resume`), or with
+  `/cachekeeper:keepalive-on`, whose turn starts the next wait as it ends. Both commands set the state, whatever it
+  was. The new hooks end with 0 like the others.
+- Why a turn rather than blocking the command, which would cost nothing: Claude Code shows every blocked prompt as a
+  warning ("blocked by hook"), and a hook that stops it with `continue: false` leaves no trace in the desktop app
+  (both seen 2026-10-15, desktop app and Claude Code 2.1.300).
+- Where Claude Code runs no `UserPromptExpansion` hook, the model runs the new
+  `cachekeeper keepalive off|on --session <id>` itself.
+- `cachekeeper statusline` says `keep-alive off (this session)` (`keep-alive 꺼짐 (이 세션)`) in such a session.
+- Tests for the mark, the commands, the status line and the CLI, and `tests/test_runner.py` runs the two new hook
+  commands in every shell, as for the others.
+
 ## 1.0.1 — 2026-09-24
 
 Three fixes from a code review (Astra), each with a test that fails on 1.0.0:

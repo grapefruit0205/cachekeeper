@@ -1,5 +1,5 @@
 {
-  "description": "cachekeeper: before a /model or picker switch forfeits a warm prompt cache, ask with the size of the loss, then ask whether the next request should run in a subagent on that model; log every switch for `cachekeeper events`; keep a long session's cache warm while its user is away, on by default (CACHEKEEPER_KEEPALIVE=0 turns it off).",
+  "description": "cachekeeper: before a /model or picker switch forfeits a warm prompt cache, ask with the size of the loss, then ask whether the next request should run in a subagent on that model; log every switch for `cachekeeper events`; keep a long session's cache warm while its user is away, on by default (CACHEKEEPER_KEEPALIVE=0 turns it off; /cachekeeper:keepalive-off, for one session).",
   "hooks": {
     "PreModelSwitch": [
       {
@@ -29,6 +29,30 @@
           {
             "type": "command",
             "command": "echo `# <#` >/dev/null; f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run\"; [ -f \"$f\" ] || exit 0; sh \"$f\" user-prompt-submit; exit 0\n#> > $null; $f = \"$env:CLAUDE_PLUGIN_ROOT/hooks/run.ps1\"; if (-not [IO.File]::Exists($f)) { exit 0 }; & $f user-prompt-submit; exit 0",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptExpansion": [
+      {
+        "matcher": "^(cachekeeper:)?keepalive-(off|on)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo `# <#` >/dev/null; f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run\"; [ -f \"$f\" ] || exit 0; sh \"$f\" user-prompt-expansion; exit 0\n#> > $null; $f = \"$env:CLAUDE_PLUGIN_ROOT/hooks/run.ps1\"; if (-not [IO.File]::Exists($f)) { exit 0 }; & $f user-prompt-expansion; exit 0",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo `# <#` >/dev/null; f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run\"; [ -f \"$f\" ] || exit 0; sh \"$f\" session-start; exit 0\n#> > $null; $f = \"$env:CLAUDE_PLUGIN_ROOT/hooks/run.ps1\"; if (-not [IO.File]::Exists($f)) { exit 0 }; & $f session-start; exit 0",
             "timeout": 10
           }
         ]

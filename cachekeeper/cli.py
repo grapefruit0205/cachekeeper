@@ -7,6 +7,7 @@ import datetime as dt
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 from . import __version__
@@ -298,7 +299,10 @@ def main(argv: list[str] | None = None) -> int:
     compact.add_argument("--projects", type=Path, default=Path.home() / ".claude" / "projects")
     compact.add_argument("--lang", choices=("ko", "en"))
     compact.add_argument("--basis", choices=BASES, help=basis_help)
-    keep = commands.add_parser("keepalive", help="which keep-alive policy would have paid off on your history")
+    keep = commands.add_parser("keepalive", help="which keep-alive policy would have paid off on your history; "
+                                                  "off/on --session ID: turn it off or on for one session")
+    keep.add_argument("action", nargs="?", choices=("off", "on"))
+    keep.add_argument("--session", help="with off/on: the session id")
     keep.add_argument("--days", type=int, default=30)
     keep.add_argument("--projects", type=Path, default=Path.home() / ".claude" / "projects")
     keep.add_argument("--lang", choices=("ko", "en"))
@@ -317,6 +321,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "compaction":
         from .compaction import run as compaction_run
         print(compaction_run(args.projects, args.days, args.lang or language(env), configured))
+        return 0
+
+    if args.command == "keepalive" and args.action:
+        if not args.session:
+            parser.error("keepalive off/on needs --session")
+        from .hook import session_reply
+        from .keepalive import set_off
+        off = args.action == "off"
+        set_off(events_dir(), args.session, off, time.time())
+        print(session_reply(off, args.lang or language(env), env))
         return 0
 
     if args.command == "keepalive":

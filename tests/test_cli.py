@@ -1,10 +1,14 @@
+import contextlib
 import datetime as dt
+import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from cachekeeper import cli
+from cachekeeper import cli, keepalive
 from cachekeeper.audit import analyze
 from cachekeeper.transcripts import read_sessions
 from test_audit import T0, response, write
@@ -63,6 +67,24 @@ class ReportTests(unittest.TestCase):
         (folder / "events.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records))
         text = cli.events_summary(folder, 5)
         self.assertIn("$9.00 at list prices, $4.50 on subscription usage", text)
+
+
+    def test_keepalive_off_and_on_for_one_session(self):
+        data = self.root / "data"
+        path = keepalive.state_path(data, "s1")
+
+        def run(*argv):
+            out = io.StringIO()
+            with mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": str(data)}), contextlib.redirect_stdout(out):
+                self.assertEqual(cli.main(list(argv)), 0)
+            return out.getvalue()
+
+        self.assertIn("keep-alive off (this session)", run("keepalive", "off", "--session", "s1", "--lang", "en"))
+        self.assertTrue(keepalive.read_state(path)["off"])
+        self.assertIn("keep-alive 켜짐 (이 세션)", run("keepalive", "on", "--session", "s1", "--lang", "ko"))
+        self.assertNotIn("off", keepalive.read_state(path))
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            cli.main(["keepalive", "off"])      # which session?
 
 
 if __name__ == "__main__":

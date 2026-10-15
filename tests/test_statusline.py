@@ -50,6 +50,14 @@ class StatusLineTests(unittest.TestCase):
         self.assertEqual(self.line({"CACHEKEEPER_KEEPALIVE": "0"}, "ko"), "캐시 152k · 40분 남음 · keep-alive 꺼짐")
         self.assertEqual(self.line(prompt_cache=warm("5m"), now=ANCHOR + 250), "cache 152k · <1m left (5-min cache)")
 
+    def test_says_when_this_session_alone_is_off(self):
+        keepalive.set_off(self.directory, "s1", True, NOW)
+        self.assertEqual(self.line(), "cache 152k · 40m left · keep-alive off (this session)")
+        self.assertEqual(self.line(lang="ko"), "캐시 152k · 40분 남음 · keep-alive 꺼짐 (이 세션)")
+        self.assertEqual(self.line({"CACHEKEEPER_KEEPALIVE": "0"}), "cache 152k · 40m left · keep-alive off")
+        keepalive.set_off(self.directory, "s1", False, NOW)
+        self.assertEqual(self.line(), "cache 152k · 40m left · next ping in 35m (1/3)")
+
     def test_auto_mode_reads_the_stored_policy_and_never_replays_history(self):
         with mock.patch("cachekeeper.autopolicy.current", side_effect=AssertionError("recomputed")):
             self.assertEqual(self.line({}), "cache 152k · 40m left · next ping in 35m (1/3)")    # the defaults

@@ -70,6 +70,8 @@ Day to day there is nothing to run. Three things happen by themselves.
 }
 ```
 
+To turn it off in one session only, say one you handed off to a new session but leave open, type `/cachekeeper:keepalive-off` there: the model answers `keep-alive off (this session)` and nothing more, and other sessions and your settings stay as they are. It comes back on when you write in that session again or resume it, or with `/cachekeeper:keepalive-on`.
+
 **When you want to know what it saves and where your usage goes.** Type `/cachekeeper:audit` in a session, or ask Claude to run one of these (the plugin puts `cachekeeper` on the PATH of Claude Code's shell):
 
 | command | shows |
@@ -112,7 +114,7 @@ Its weak points are under [Limits](#limits).
 
 **Does it ping my old sessions?** No. A session is pinged only after a turn ends in it while cachekeeper is running, so after you restart the app, only the sessions you have used since. Each session also stops at its cap (on the author's history, 24 hours after your last message in it), and at once when the app closes or the computer sleeps past the hour.
 
-**I run several sessions in parallel. Which ones get pinged?** Each runs on its own clock: 55 minutes after that session's last request, up to its cap after your last message there. Typing in one session does not reset another. cachekeeper cannot tell a finished session from one you will come back to, so the cap comes from how often you did come back. On the author's history 70% of the pings went to sessions never returned to and cost 0.6% of usage; the rest prevented rebuilds worth 7.5%.
+**I run several sessions in parallel. Which ones get pinged?** Each runs on its own clock: 55 minutes after that session's last request, up to its cap after your last message there. Typing in one session does not reset another. cachekeeper cannot tell a finished session from one you will come back to, so the cap comes from how often you did come back. On the author's history 70% of the pings went to sessions never returned to and cost 0.6% of usage; the rest prevented rebuilds worth 7.5%. When you know you are done with one, `/cachekeeper:keepalive-off` in it stops its pings.
 
 **What does a ping cost?** About a cent of subscription usage: it writes a few hundred tokens, and the cache read counts next to nothing. At API list prices it also re-reads the whole conversation: about $0.07 for a 300k-token Opus 5.5 conversation, against $2.40 for the rebuild.
 
@@ -130,7 +132,7 @@ Its weak points are under [Limits](#limits).
 
 **Does it send anything anywhere?** No. It reads this machine's transcripts. Its log (`events.jsonl` in the plugin's data folder) holds model ids, token counts and decisions, no prompt text.
 
-**How do I turn one part off?** The keep-alive: `"CACHEKEEPER_KEEPALIVE": "0"`. The guard: `"CACHEKEEPER_MODE": "off"`, or `"warn"` to show the message without stopping the switch. Both go in the `env` block of `~/.claude/settings.json` ([all settings](#requirements-and-settings)).
+**How do I turn one part off?** The keep-alive: `"CACHEKEEPER_KEEPALIVE": "0"`, or `/cachekeeper:keepalive-off` for one session. The guard: `"CACHEKEEPER_MODE": "off"`, or `"warn"` to show the message without stopping the switch. Both go in the `env` block of `~/.claude/settings.json` ([all settings](#requirements-and-settings)).
 
 ## Why
 
@@ -277,6 +279,7 @@ Coming back to a session after more than an hour re-caches the whole conversatio
 - When a turn ends, a `Stop` hook waits in the background (an `asyncRewake` hook: Claude Code wakes the model only if it exits with code 2). 55 minutes after the last request started, it wakes the model, which replies `(keep-alive)`: one request that reads the cache and starts its hour again. For a 300k-token Opus 5.5 conversation a ping costs about $0.07 at list price, nearly all of it the read, against $2.40 for the rebuild. On subscription usage the read counts next to nothing, and a ping counts mostly its own few hundred tokens: about $0.007 against $1.20 (the author's 15 pings each wrote 511 tokens and replied with 123, on average).
 - Only for conversations on the one-hour cache above a minimum size (a transcript that shows no cache writes, as when Claude Code runs another provider's model, gets no pings: nothing shows that one would pay), and for at most so many pings in a row. By default both come from your history (below); the fixed settings are 100k tokens and 3 pings, after which the cache lasts one more hour, about 3¾ hours after you left. Your next message starts the count again.
 - It stands down when you write, when another turn ends, when the model is switched (the next request re-caches anyway), after `/compact`, and when the machine slept past the hour. `claude -p` runs and Agent SDK apps are left alone.
+- `/cachekeeper:keepalive-off` turns it off for the session you type it in. A `UserPromptExpansion` hook marks the session in the plugin's data folder and tells the model to answer `keep-alive off (this session)` and nothing else: one short turn, about the cost of a ping, since the cache is warm while the keep-alive runs. A wait already running stands down within 30 seconds (`session off` in `cachekeeper events`), and the turn's own end starts none. The mark goes when you send that session an ordinary message (not a slash command), when you resume it, or with `/cachekeeper:keepalive-on`, whose turn starts the next wait as it ends. Blocking the command would cost nothing, but Claude Code shows every blocked prompt as a warning ("blocked by hook"), and a hook that stops it with `continue: false` leaves no trace in the desktop app (both seen 2026-10-15). In a Claude Code without `UserPromptExpansion` hooks the model runs `cachekeeper keepalive off --session <id>` itself.
 - Exit 2 is the one failure that loops. Claude Code 2.1.280 wakes the model on exit code 2 and on nothing else (read in its code), so a Stop hook that exits 2 at every turn end wakes it without end ([anthropics/claude-code#96087](https://github.com/anthropics/claude-code/issues/96087) and [#96148](https://github.com/anthropics/claude-code/issues/96148), both a Python that could not open its script). So a cachekeeper hook exits 2 only on request: for a ping the keep-alive ends with its own code, 75, and the Stop hook's command turns that code alone into 2. Whatever else ends a hook (its files gone, no Python, a crash, a shell that cannot open a script, as Ubuntu's `sh` then exits 2 too) ends it with 0, and the model-switch and prompt hooks always end with 0: their answers are JSON.
 
 Which numbers pay off depends on how you take breaks, and on the yardstick. `cachekeeper keepalive` replays your history (the breaks you came back from, and the time after each session's last message, where pings would only have cost) and prints the best policy: the one the default `auto` mode uses. On the author's 12.7 days:
@@ -307,7 +310,7 @@ In the terminal, `cachekeeper statusline` fills Claude Code's status line with t
 cache 312k · 36m left · next ping in 31m (1/26)
 ```
 
-`312k` is what the next request would write again if the cache went cold; `(1/26)` says the next ping is the first of the 26 the current policy allows after your last message. It can also say `ping due`, `ping cap (26/26)`, `no ping (under 100k)`, `keep-alive off`, `(5-min cache)` (the keep-alive only keeps the one-hour cache) and `cache cold · next request rewrites 312k`. It speaks Korean with `CACHEKEEPER_LANG=ko` or a Korean `LANG`.
+`312k` is what the next request would write again if the cache went cold; `(1/26)` says the next ping is the first of the 26 the current policy allows after your last message. It can also say `ping due`, `ping cap (26/26)`, `no ping (under 100k)`, `keep-alive off`, `keep-alive off (this session)` (after `/cachekeeper:keepalive-off`), `(5-min cache)` (the keep-alive only keeps the one-hour cache) and `cache cold · next request rewrites 312k`. It speaks Korean with `CACHEKEEPER_LANG=ko` or a Korean `LANG`.
 
 A plugin cannot set the status line, so add this to `~/.claude/settings.json` yourself. The path is the marketplace's copy of the plugin, which stays in place across versions:
 
@@ -357,7 +360,7 @@ Claude Code itself also helps: the status line receives the cache's expiry time,
 
 ## Requirements and settings
 
-Needs Python 3.8+ (the hook stays silent and lets every switch through without one) and a Claude Code with `PreModelSwitch` hooks (and `asyncRewake` hooks for the keep-alive; 2.1.280 has both). To try a checkout: `claude --plugin-dir /path/to/cachekeeper`.
+Needs Python 3.8+ (the hook stays silent and lets every switch through without one) and a Claude Code with `PreModelSwitch` hooks (and `asyncRewake` hooks for the keep-alive; 2.1.280 has both; `/cachekeeper:keepalive-off` uses `UserPromptExpansion` hooks where Claude Code has them). To try a checkout: `claude --plugin-dir /path/to/cachekeeper`.
 
 It runs on Linux, macOS and Windows, there in Git Bash or in PowerShell ([On Windows](#on-windows)), and CI runs the tests on all three ([Tests](#tests)).
 
