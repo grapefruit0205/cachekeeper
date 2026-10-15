@@ -1,4 +1,5 @@
-"""Hook entry point: ``python -m cachekeeper.hook pre-model-switch|post-model-switch|user-prompt-submit|stop``.
+"""Hook entry point: ``python -m cachekeeper.hook pre-model-switch|post-model-switch|user-prompt-submit|
+user-prompt-expansion|session-start|stop``.
 
 Reads the event from stdin, answers on stdout, and appends one line per event to
 ``events.jsonl`` in the plugin's data directory (no prompt text, no file
@@ -22,6 +23,19 @@ from . import keepalive
 from .guard import Config, at_stake, basis_for, decide, delegation, offer_for
 
 MAX_EVENT_BYTES = 1_000_000
+# /cachekeeper:keepalive-off and -on: the hook turns the keep-alive off or on, and the model only says so in one line.
+# Blocking the command would make no request, but Claude Code shows every blocked prompt as a warning ("blocked by
+# hook"), and `continue: false` shows nothing at all in the desktop app (both seen 2026-10-15).
+SESSION_COMMANDS = {"keepalive-off": True, "keepalive-on": False}
+SESSION_REPLIES = {"ko": {True: "keep-alive 꺼짐 (이 세션)", False: "keep-alive 켜짐 (이 세션)",
+                          "global": " — 설정의 CACHEKEEPER_KEEPALIVE=0으로 모든 세션에서 꺼져 있음"},
+                   "en": {True: "keep-alive off (this session)", False: "keep-alive on (this session)",
+                          "global": " — CACHEKEEPER_KEEPALIVE=0 in settings keeps it off in every session"}}
+
+
+def session_reply(off: bool, lang: str, env: dict[str, str]) -> str:
+    words = SESSION_REPLIES[lang]
+    return words[off] + (words["global"] if not off and keepalive.mode(env) == "off" else "")
 
 
 def data_dir(env: dict[str, str] | None = None) -> Path:
@@ -115,13 +129,32 @@ def handle(kind: str, raw: str, env: dict[str, str] | None = None, now: float | 
             keepalive.switched(directory, session)  # the next request rebuilds anyway: no ping for it
         log_event(directory, record_for("post", event, "switched", basis_for(event, config)))
         return ""
+    if kind == "user-prompt-expansion":
+        name = str(event.get("command_name", ""))
+        command = name[len("cachekeeper:"):] if name.startswith("cachekeeper:") else name
+        if command not in SESSION_COMMANDS or not session or (
+                command == name and event.get("command_source") not in (None, "plugin")):
+            return ""   # someone else's command
+        off = SESSION_COMMANDS[command]
+        keepalive.set_off(directory, session, off, now)
+        context = (f"cachekeeper has already turned the keep-alive {'off' if off else 'on'} for this session; other "
+                   f"sessions and the settings are unchanged. Reply with exactly `{session_reply(off, config.lang, env)}`, in "
+                   f"the user's language if they write in another, and nothing else: no tools, no summary.")
+        return json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptExpansion", "additionalContext": context}},
+                          ensure_ascii=False)
+    if kind == "session-start":
+        if session and event.get("source") == "resume":
+            keepalive.set_off(directory, session, False, now)   # a resumed session keeps its cache warm again
+        return ""
     if kind == "user-prompt-submit":
+        prompt = str(event.get("prompt", ""))
+        if session and not prompt.lstrip().startswith(("/", "<")):
+            keepalive.set_off(directory, session, False, now)   # the user writes here again: the keep-alive is back
         # The first ordinary message after a refused switch is the request the user meant for the
         # other model: the main model asks whether a subagent on that model should take it. Nobody
         # answers in `claude -p` runs and SDK apps (an `sdk-` entrypoint), so there it goes to the
         # subagent at once. Slash commands (a `/model` confirming the switch, anything else) leave
         # the offer for the next message.
-        prompt = str(event.get("prompt", ""))
         offers = read_pending(offers_path)
         offer = offers.get(session)
         if not isinstance(offer, dict) or prompt.lstrip().startswith("/"):

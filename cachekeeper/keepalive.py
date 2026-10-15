@@ -19,14 +19,16 @@ the model with what it printed. ``wait``
   the model answers one word, which reads the cache and
   restarts the hour, and the Stop hook of that short turn starts the next wait;
 * returns 0 as soon as something else happens first: the user writes, another
-  turn ends, the model is switched, the session is gone, or the machine slept
-  past the hour.
+  turn ends, the model is switched, the keep-alive is turned off for this
+  session, the session is gone, or the machine slept past the hour.
 
 It is on by default in ``auto`` mode: the minimum size and ``max_pings`` come
 from this machine's history (``autopolicy``), which leaves the keep-alive off
 when no policy would have paid off. ``CACHEKEEPER_KEEPALIVE=1`` waits under the
 fixed settings instead (3 pings in a row, about three hours) and ``0`` turns it
-off. ``plan`` holds the decision and is pure; ``wait`` is the loop around it.
+off. ``/cachekeeper:keepalive-off`` turns it off for one session (``set_off``) until
+the user writes in it again, resumes it, or runs ``/cachekeeper:keepalive-on``.
+``plan`` holds the decision and is pure; ``wait`` is the loop around it.
 """
 
 from __future__ import annotations
@@ -320,6 +322,8 @@ def wait(event: dict, env: dict[str, str], directory: Path, *, now: Callable[[],
     session = str(event.get("session_id") or "")
     if not session or not transcript.is_file():
         return 0
+    if read_state(state_path(directory, session)).get("off"):
+        return 0                        # turned off for this session
     policy = policy_for(env, directory, now())
     if policy is None or policy.max_pings <= 0:
         return 0
@@ -347,6 +351,8 @@ def _wait(transcript: Path, session: str, directory: Path, policy: Policy, env: 
     view = View()
     while True:
         state = read_state(path)
+        if state.get("off"):
+            return 0, "session off", view   # /cachekeeper:keepalive-off while it waited
         if state.get("generation") != generation:
             return 0, "superseded", view    # a later turn ended or the model was switched
         if owner and not _alive(owner):
@@ -370,6 +376,20 @@ def _wait(transcript: Path, session: str, directory: Path, policy: Policy, env: 
             err.write(message(view, count, current, policy) + "\n")
             return WAKE, f"{count}/{policy.max_pings}", view
         sleep(min(POLL_SECONDS, max(1.0, seconds)))
+
+
+def set_off(directory: Path, session: str, off: bool, now: float) -> None:
+    """Turn the keep-alive off (or back on) for one session. A wait already running stands down at its next look,
+    within ``POLL_SECONDS``; turned back on, the next turn end starts one."""
+    path = state_path(directory, session)
+    state = read_state(path)
+    if bool(state.get("off")) == off:
+        return                          # nothing to change: most prompts leave the file untouched
+    if off:
+        state["off"] = now
+    else:
+        state.pop("off", None)
+    write_state(path, state)
 
 
 def switched(directory: Path, session: str) -> None:

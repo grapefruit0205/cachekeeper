@@ -21,11 +21,13 @@ WORDS = {
            "cold": "캐시 식음", "rewrite": "다음 요청에 {size} 다시 씀",
            "next": "다음 핑 {time} 후 ({n}/{max})", "now": "곧 핑 ({n}/{max})",
            "cap": "핑 한도 ({max}/{max})", "small": "핑 안 함 ({min} 미만)", "off": "keep-alive 꺼짐",
+           "session off": "keep-alive 꺼짐 (이 세션)",
            "minutes": "{m}분", "under": "1분 미만"},
     "en": {"cache": "cache {size}", "left": "{time} left", "short": "(5-min cache)",
            "cold": "cache cold", "rewrite": "next request rewrites {size}",
            "next": "next ping in {time} ({n}/{max})", "now": "ping due ({n}/{max})",
            "cap": "ping cap ({max}/{max})", "small": "no ping (under {min})", "off": "keep-alive off",
+           "session off": "keep-alive off (this session)",
            "minutes": "{m}m", "under": "<1m"},
 }
 
@@ -65,8 +67,10 @@ def next_ping(event: dict, env: dict[str, str], directory: Path, now: float, wor
     transcript = Path(str(event.get("transcript_path") or ""))
     if not session or not transcript.is_file():
         return ""
-    view = keepalive.read_view(transcript)
     state = keepalive.read_state(keepalive.state_path(directory, session))
+    if state.get("off"):
+        return words["session off"]
+    view = keepalive.read_view(transcript)
     pings = [float(at) for at in state.get("pings", []) if isinstance(at, (int, float))]
     # Planned as if the turn ended now: while the user types or the model works, that is what an idle moment brings.
     action, seconds, reason = keepalive.plan(view, pings, now, now, policy)

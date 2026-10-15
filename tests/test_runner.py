@@ -238,6 +238,25 @@ class HookCommandTests(unittest.TestCase):
                 self.assertIn("이 요청을 fable-5-1 서브에이전트로 실행할까요?",
                               json.loads(out)["hookSpecificOutput"]["additionalContext"])
 
+    def test_the_session_commands_answer_in_utf8_and_never_exit_2(self):
+        # The hook answers /cachekeeper:keepalive-off with JSON on stdout, exit 0: exit 2 would block the command,
+        # and a hook command never ends with 2 except for a ping.
+        expansion = {"session_id": "s1", "hook_event_name": "UserPromptExpansion", "expansion_type": "slash_command",
+                     "command_name": "cachekeeper:keepalive-off", "command_args": "", "command_source": "plugin",
+                     "prompt": "/cachekeeper:keepalive-off"}
+        for shell in SHELLS:
+            with self.subTest(shell=shell):
+                state = self.directory / shell / "data" / "keepalive" / "s1.json"
+                code, out, err = self.run_hook(shell, "UserPromptExpansion", expansion)
+                self.assertEqual((code, err), (0, ""))
+                answer = json.loads(out)
+                self.assertNotIn("decision", answer)
+                self.assertIn("`keep-alive 꺼짐 (이 세션)`", answer["hookSpecificOutput"]["additionalContext"])
+                self.assertIn('"off"', state.read_text(encoding="utf-8"))
+                self.assertEqual(self.run_hook(shell, "SessionStart", {"session_id": "s1", "source": "resume"}),
+                                 (0, "", ""))
+                self.assertNotIn('"off"', state.read_text(encoding="utf-8"))
+
     def test_no_hook_exits_2_when_the_plugin_files_are_gone(self):
         # Exit 2 blocks a switch, erases a prompt and wakes the model; an asyncRewake Stop hook that exits 2 on
         # every turn end loops without end (anthropics/claude-code#96087, #96148). Ubuntu's sh (dash) exits 2 when
@@ -246,6 +265,8 @@ class HookCommandTests(unittest.TestCase):
         events = {"PreModelSwitch": {"session_id": "s1", "to_model": "claude-fable-5-1"},
                   "PostModelSwitch": {"session_id": "s1", "to_model": "claude-fable-5-1"},
                   "UserPromptSubmit": {"session_id": "s1", "prompt": "안녕"},
+                  "UserPromptExpansion": {"session_id": "s1", "command_name": "cachekeeper:keepalive-off"},
+                  "SessionStart": {"session_id": "s1", "source": "resume"},
                   "Stop": self.stop_event(read=150_000)}
         for shell in SHELLS:
             for event_name, event in events.items():

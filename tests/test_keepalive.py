@@ -307,6 +307,91 @@ class WaitTests(unittest.TestCase):
         hook.handle("post-model-switch", json.dumps({**post, "source": "sdk"}), env)
         self.assertIsNone(keepalive.read_state(path)["generation"])
 
+    def test_turned_off_for_this_session_a_running_wait_stands_down(self):
+        clock = Clock(at(45))
+        clock.on_sleep = lambda: keepalive.set_off(self.directory, "s1", True, clock.value) if len(clock.slept) == 3             else None
+        self.assertEqual(self.run_wait(clock), (0, ""))
+        self.assertEqual(len(clock.slept), 3)
+        self.assertEqual(self.records[0]["reason"], "session off")
+
+    def test_a_session_turned_off_waits_for_nothing_until_it_is_back_on(self):
+        path = keepalive.state_path(self.directory, "s1")
+        keepalive.set_off(self.directory, "s1", False, at(40))
+        self.assertFalse(path.exists())                 # turning on what is on writes nothing
+        keepalive.set_off(self.directory, "s1", True, at(40))
+        clock = Clock(at(45))
+        self.assertEqual(self.run_wait(clock), (0, ""))
+        self.assertEqual((clock.slept, self.records), ([], []))     # quietly, like CACHEKEEPER_KEEPALIVE=0
+        self.assertEqual(keepalive.read_state(path)["off"], at(40))
+        keepalive.set_off(self.directory, "s1", False, at(50))
+        self.assertNotIn("off", keepalive.read_state(path))
+        self.assertEqual(self.run_wait(Clock(at(45)))[0], keepalive.WAKE)
+
+
+class SessionOffTests(unittest.TestCase):
+    """/cachekeeper:keepalive-off and -on: the UserPromptExpansion hook does it, the model only says so."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.directory = Path(self.temporary.name)
+        self.env = {"CLAUDE_PLUGIN_DATA": str(self.directory), "CACHEKEEPER_LANG": "en"}
+        self.path = keepalive.state_path(self.directory, "s1")
+
+    def command(self, name, source="plugin", env=None):
+        event = {"session_id": "s1", "hook_event_name": "UserPromptExpansion", "expansion_type": "slash_command",
+                 "command_name": name, "command_args": "", "command_source": source, "prompt": f"/{name}"}
+        output = hook.handle("user-prompt-expansion", json.dumps(event), env or self.env, now=at(100))
+        return json.loads(output)["hookSpecificOutput"]["additionalContext"] if output else None
+
+    def off(self):
+        return bool(keepalive.read_state(self.path).get("off"))
+
+    def test_the_commands_turn_it_off_and_on_and_the_model_only_says_so(self):
+        for name in ("cachekeeper:keepalive-off", "keepalive-off"):
+            with self.subTest(name=name):
+                keepalive.set_off(self.directory, "s1", False, at(0))
+                note = self.command(name)
+                self.assertIn("already turned the keep-alive off for this session", note)
+                self.assertIn("Reply with exactly `keep-alive off (this session)`", note)
+                self.assertIn("no tools", note)
+                self.assertTrue(self.off())
+        self.assertIn("Reply with exactly `keep-alive on (this session)`", self.command("cachekeeper:keepalive-on"))
+        self.assertFalse(self.off())
+        korean = self.command("cachekeeper:keepalive-off", env={**self.env, "CACHEKEEPER_LANG": "ko"})
+        self.assertIn("`keep-alive 꺼짐 (이 세션)`", korean)
+
+    def test_turning_it_on_says_when_the_settings_keep_it_off(self):
+        note = self.command("cachekeeper:keepalive-on", env={**self.env, "CACHEKEEPER_KEEPALIVE": "0"})
+        self.assertIn("CACHEKEEPER_KEEPALIVE=0 in settings keeps it off in every session", note)
+
+    def test_other_commands_pass_through(self):
+        for name, source in (("cachekeeper:audit", "plugin"), ("other:keepalive-off", "plugin"),
+                             ("keepalive-off", "projectSettings"), ("keepalive", "plugin")):
+            with self.subTest(name=name, source=source):
+                self.assertIsNone(self.command(name, source))
+                self.assertFalse(self.path.exists())
+
+    def test_writing_again_or_resuming_turns_it_back_on(self):
+        def submit(text):
+            hook.handle("user-prompt-submit", json.dumps({"session_id": "s1", "prompt": text}), self.env, now=at(200))
+
+        def start(source):
+            hook.handle("session-start", json.dumps({"session_id": "s1", "source": source}), self.env, now=at(200))
+
+        self.command("cachekeeper:keepalive-off")
+        for text in ("/cost", "  /cachekeeper:keepalive-off", "<task-notification>done</task-notification>"):
+            submit(text)
+            self.assertTrue(self.off(), text)       # commands and notifications are not the user writing
+        submit("one more thing")
+        self.assertFalse(self.off())
+        self.command("cachekeeper:keepalive-off")
+        for source in ("startup", "clear", "compact"):
+            start(source)
+            self.assertTrue(self.off(), source)
+        start("resume")
+        self.assertFalse(self.off())
+
 
 class AliveTests(unittest.TestCase):
     """The wait's check that Claude Code (CLAUDE_PID) still runs. On Windows it must not use os.kill, which would
